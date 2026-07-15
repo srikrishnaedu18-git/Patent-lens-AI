@@ -14,17 +14,20 @@ from pathlib import Path
 from datetime import datetime
 from typing import AsyncGenerator
 
+from dotenv import load_dotenv
+load_dotenv()
+
 from fastapi import FastAPI, HTTPException, BackgroundTasks
 from fastapi.responses import StreamingResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from db import (
     init_db, get_projects, create_project, delete_project,
     create_search, save_patents, get_project_data, get_search_results,
     get_patents_by_ids, get_all_project_patents, update_patent_audit,
 )
-from scraper import scrape_patents
+from scraper import get_india_options_from_env, normalize_india_options, normalize_sources, scrape_patents
 
 # ── Logging ───────────────────────────────────────────────────────────────────
 logging.basicConfig(
@@ -52,6 +55,7 @@ init_db()
 
 # ── In-memory task store (task_id → asyncio.Queue) ───────────────────────────
 _task_queues: dict[str, asyncio.Queue] = {}
+_captcha_futures: dict[str, asyncio.Future] = {}
 
 
 # ── Pydantic schemas ──────────────────────────────────────────────────────────
@@ -63,6 +67,8 @@ class ManualScrapeRequest(BaseModel):
     project_id: int
     keywords: str          # comma-separated
     max_results: int = 20
+    sources: list[str] = Field(default_factory=lambda: ["google"])
+    india_options: dict = Field(default_factory=dict)
 
 class GenerateQueriesRequest(BaseModel):
     requirement: str
@@ -74,6 +80,8 @@ class ConfirmAISearchRequest(BaseModel):
     cpc_codes: list[str]
     ai_rationale: str
     max_results: int = 20
+    sources: list[str] = Field(default_factory=lambda: ["google"])
+    india_options: dict = Field(default_factory=dict)
 
 class AuditRequest(BaseModel):
     requirement: str = ""  # optional override; falls back to stored query
@@ -82,6 +90,9 @@ class ExportRequest(BaseModel):
     patent_ids: list[int] = None
     relevancy_filter: list[str] = None  # e.g. ["Red", "Yellow"]
 
+class CaptchaAnswerRequest(BaseModel):
+    answer: str
+
 
 # ── Helper: push SSE event to task queue ─────────────────────────────────────
 
@@ -89,6 +100,106 @@ async def _push(queue: asyncio.Queue, event: dict):
     await queue.put(event)
     logger.info("[SSE] Event pushed: stage=%s | %s",
                 event.get("stage"), event.get("message", event.get("current", "")))
+
+
+_captcha_attempts: dict[str, int] = {}
+
+async def _auto_solve_captcha_with_gemini(image_data_url: str) -> str:
+    """Uses Gemini vision models to automatically solve a CAPTCHA."""
+    import base64
+    from PIL import Image
+    try:
+        from ai_agent import gemini_client, GEMINI_MODEL
+    except Exception as exc:
+        logger.error("[CAPTCHA] Failed to import from ai_agent: %s", exc)
+        return ""
+
+    if not image_data_url.startswith("data:image/png;base64,"):
+        logger.error("[CAPTCHA] Invalid image data URL format")
+        return ""
+
+    try:
+        # Decode base64 PNG data
+        base64_data = image_data_url.split(",", 1)[1]
+        img_bytes = base64.b64decode(base64_data)
+        img = Image.open(io.BytesIO(img_bytes)).convert("RGB")
+
+        prompt = (
+            "Identify the alphanumeric characters in this CAPTCHA image. "
+            "Output ONLY the exact characters, with no spaces, explanations, or extra text."
+        )
+
+        # Run generator in a thread pool since genai client calls are blocking
+        def _call_gemini():
+            response = gemini_client.models.generate_content(
+                model=GEMINI_MODEL,
+                contents=[img, prompt],
+            )
+            return response.text
+
+        loop = asyncio.get_running_loop()
+        response_text = await loop.run_in_executor(None, _call_gemini)
+        
+        answer = response_text.strip() if response_text else ""
+        logger.info("[CAPTCHA] Gemini auto-solve raw response: %s", answer)
+        return answer
+    except Exception as exc:
+        logger.error("[CAPTCHA] Gemini auto-solve failed: %s", exc, exc_info=True)
+        return ""
+
+
+async def _request_captcha(task_id: str, image_data_url: str) -> str:
+    """Publish a CAPTCHA challenge and wait for the user's answer (or auto-solve)."""
+    queue = _task_queues.get(task_id)
+    if not queue:
+        logger.error("[CAPTCHA] Queue not found for task %s", task_id)
+        return ""
+
+    # Increment and track CAPTCHA attempts for this task
+    attempt = _captcha_attempts.get(task_id, 0) + 1
+    _captcha_attempts[task_id] = attempt
+
+    # If first attempt and GEMINI_API_KEY is available, try auto-solving
+    import os
+    api_key = os.getenv("GEMINI_API_KEY")
+    if attempt == 1:
+        if api_key:
+            await _push(queue, {
+                "stage": "scraping",
+                "message": "Attempting to automatically solve CAPTCHA using Gemini..."
+            })
+            answer = await _auto_solve_captcha_with_gemini(image_data_url)
+            if answer:
+                await _push(queue, {
+                    "stage": "scraping",
+                    "message": f"Gemini predicted CAPTCHA code: {answer}. Submitting..."
+                })
+                return answer
+            else:
+                await _push(queue, {
+                    "stage": "scraping",
+                    "message": "Gemini could not solve the CAPTCHA. Falling back to manual input..."
+                })
+        else:
+            logger.warning("[CAPTCHA] GEMINI_API_KEY environment variable is not set. Skipping auto-solve.")
+            await _push(queue, {
+                "stage": "scraping",
+                "message": "GEMINI_API_KEY not configured. Falling back to manual input..."
+            })
+
+    # Manual fallback flow
+    loop = asyncio.get_running_loop()
+    future = loop.create_future()
+    _captcha_futures[task_id] = future
+    await _push(queue, {
+        "stage": "captcha",
+        "message": "Indian Patent Search needs CAPTCHA. Enter the code shown to continue.",
+        "captcha_image": image_data_url,
+    })
+    try:
+        return await asyncio.wait_for(future, timeout=180)
+    finally:
+        _captcha_futures.pop(task_id, None)
 
 
 # ── SSE generator with keep-alive pings ──────────────────────────────────────
@@ -114,6 +225,7 @@ async def _sse_generator(task_id: str) -> AsyncGenerator[str, None]:
             break
 
     _task_queues.pop(task_id, None)
+    _captcha_attempts.pop(task_id, None)
     logger.info("[SSE] Stream closed for task_id=%s", task_id)
 
 
@@ -126,6 +238,8 @@ async def _ai_pipeline(
     cpc_codes: list[str],
     ai_rationale: str,
     max_results: int,
+    sources: list[str],
+    india_options: dict,
     task_id: str,
 ):
     """Scrapes patents for all queries and saves ALL results to the DB immediately.
@@ -135,14 +249,18 @@ async def _ai_pipeline(
     try:
         await _push(queue, {
             "stage": "scraping",
-            "message": f"Starting Playwright browser — {len(queries)} quer{'y' if len(queries)==1 else 'ies'} to run...",
+            "message": (
+                f"Starting Playwright browser — {len(queries)} quer{'y' if len(queries)==1 else 'ies'} "
+                f"across {', '.join(s.title() for s in sources)} Patents..."
+            ),
         })
 
         all_raw: list[dict] = []
         for i, q in enumerate(queries, 1):
+            source_labels = " & ".join(s.title() for s in sources)
             await _push(queue, {
                 "stage": "scraping",
-                "message": f"🔍 Searching Google Patents ({i}/{len(queries)}): {q[:80]}...",
+                "message": f"🔍 Searching {source_labels} ({i}/{len(queries)}): {q[:80]}...",
             })
             try:
                 def _progress_sync(msg: str):
@@ -151,7 +269,14 @@ async def _ai_pipeline(
                             queue.put({"stage": "scraping", "message": m})
                         )
                     )
-                results = await scrape_patents(q, max_results, progress_callback=_progress_sync)
+                results = await scrape_patents(
+                    q,
+                    max_results,
+                    progress_callback=_progress_sync,
+                    sources=sources,
+                    india_options=india_options,
+                    captcha_callback=lambda image, tid=task_id: _request_captcha(tid, image),
+                )
                 all_raw.extend(results)
                 await _push(queue, {
                     "stage": "scraping",
@@ -206,6 +331,79 @@ async def _ai_pipeline(
     except Exception as exc:
         logger.error("[Pipeline] Unhandled error task_id=%s: %s", task_id, exc, exc_info=True)
         await _push(queue, {"stage": "error", "message": f"Pipeline crashed: {str(exc)}"})
+
+
+# ── Background pipeline: Manual scrape ───────────────────────────────────────
+
+async def _manual_pipeline(
+    project_id: int,
+    keywords: list[str],
+    max_results: int,
+    sources: list[str],
+    india_options: dict,
+    task_id: str,
+):
+    queue = _task_queues[task_id]
+    try:
+        await _push(queue, {
+            "stage": "scraping",
+            "message": (
+                f"Starting manual scrape for {len(keywords)} keyword"
+                f"{'' if len(keywords) == 1 else 's'} across {', '.join(s.title() for s in sources)} Patents..."
+            ),
+        })
+
+        scraped_runs = []
+        for idx, kw in enumerate(keywords, 1):
+            await _push(queue, {
+                "stage": "scraping",
+                "message": f"Searching keyword {idx}/{len(keywords)}: {kw[:80]}",
+            })
+
+            def _progress_sync(msg: str):
+                asyncio.get_event_loop().call_soon_threadsafe(
+                    lambda m=msg: asyncio.ensure_future(
+                        queue.put({"stage": "scraping", "message": m})
+                    )
+                )
+
+            try:
+                patents = await scrape_patents(
+                    kw,
+                    max_results,
+                    progress_callback=_progress_sync,
+                    sources=sources,
+                    india_options=india_options,
+                    captcha_callback=lambda image, tid=task_id: _request_captcha(tid, image),
+                )
+                if patents:
+                    source_label = ", ".join(sorted({p.get("source", "Google Patents") for p in patents}))
+                    search_id = create_search(project_id, f"{kw} [{source_label}]", search_mode="manual")
+                    save_patents(search_id, patents)
+                    scraped_runs.append({"keyword": kw, "count": len(patents), "search_id": search_id})
+                    await _push(queue, {
+                        "stage": "saving",
+                        "message": f"Saved {len(patents)} patents for keyword: {kw[:80]}",
+                    })
+                else:
+                    scraped_runs.append({"keyword": kw, "count": 0, "error": "No results found"})
+            except Exception as exc:
+                logger.error("[Manual] Scrape failed for '%s': %s", kw, exc, exc_info=True)
+                scraped_runs.append({"keyword": kw, "count": 0, "error": str(exc)})
+                await _push(queue, {
+                    "stage": "scraping",
+                    "message": f"Keyword failed: {kw[:60]} — {str(exc)[:120]}",
+                })
+
+        await _push(queue, {
+            "stage": "complete",
+            "message": "Manual scrape complete.",
+            "scraped": scraped_runs,
+            "data": get_project_data(project_id),
+        })
+    except Exception as exc:
+        logger.error("[Manual] Pipeline crashed task_id=%s: %s", task_id, exc, exc_info=True)
+        await _push(queue, {"stage": "error", "message": f"Manual scrape crashed: {str(exc)}"})
 
 
 # ── Background pipeline: On-demand AI Audit ──────────────────────────────────
@@ -327,14 +525,24 @@ def fetch_project_data(project_id: int):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@app.get("/api/settings/defaults")
+def get_settings_defaults():
+    return {
+        "sources": ["google"],
+        "india_options": get_india_options_from_env(),
+    }
+
+
 # ── API Endpoints — Manual Scrape ─────────────────────────────────────────────
 
 @app.post("/api/scrape")
-async def trigger_manual_scrape(req: ManualScrapeRequest):
-    """Legacy keyword scrape — returns result synchronously."""
+async def trigger_manual_scrape(req: ManualScrapeRequest, background_tasks: BackgroundTasks):
+    """Keyword scrape — starts a background task so CAPTCHA can be handled via SSE."""
     project_id = req.project_id
     raw_keywords = req.keywords.strip()
     max_results = req.max_results
+    sources = normalize_sources(req.sources)
+    india_options = normalize_india_options(req.india_options or get_india_options_from_env())
 
     if not raw_keywords:
         raise HTTPException(status_code=400, detail="Keywords cannot be empty")
@@ -343,26 +551,18 @@ async def trigger_manual_scrape(req: ManualScrapeRequest):
     if not keywords_list:
         raise HTTPException(status_code=400, detail="No valid keywords found")
 
-    scraped_runs = []
-    for kw in keywords_list:
-        try:
-            logger.info("[API] Manual scrape for keyword: %s", kw)
-            patents = await scrape_patents(kw, max_results)
-            if patents:
-                search_id = create_search(project_id, kw, search_mode="manual")
-                save_patents(search_id, patents)
-                scraped_runs.append({"keyword": kw, "count": len(patents), "search_id": search_id})
-            else:
-                scraped_runs.append({"keyword": kw, "count": 0, "error": "No results found"})
-        except Exception as e:
-            logger.error("[API] Manual scrape error for '%s': %s", kw, e, exc_info=True)
-            scraped_runs.append({"keyword": kw, "count": 0, "error": str(e)})
-
-    return {
-        "status": "success",
-        "scraped": scraped_runs,
-        "data": get_project_data(project_id),
-    }
+    task_id = str(uuid.uuid4())
+    _task_queues[task_id] = asyncio.Queue()
+    background_tasks.add_task(
+        _manual_pipeline,
+        project_id=project_id,
+        keywords=keywords_list,
+        max_results=max_results,
+        sources=sources,
+        india_options=india_options,
+        task_id=task_id,
+    )
+    return {"status": "processing", "task_id": task_id}
 
 
 # ── API Endpoints — AI Pipeline ───────────────────────────────────────────────
@@ -398,12 +598,14 @@ async def confirm_ai_search(req: ConfirmAISearchRequest, background_tasks: Backg
     """Step 2: confirms queries, starts scrape-only background pipeline."""
     if not req.queries:
         raise HTTPException(status_code=400, detail="No queries provided")
+    sources = normalize_sources(req.sources)
+    india_options = normalize_india_options(req.india_options or get_india_options_from_env())
 
     task_id = str(uuid.uuid4())
     queue: asyncio.Queue = asyncio.Queue()
     _task_queues[task_id] = queue
 
-    logger.info("[API] AI search confirmed — task_id=%s, queries=%d", task_id, len(req.queries))
+    logger.info("[API] AI search confirmed — task_id=%s, queries=%d sources=%s", task_id, len(req.queries), sources)
 
     background_tasks.add_task(
         _ai_pipeline,
@@ -413,9 +615,23 @@ async def confirm_ai_search(req: ConfirmAISearchRequest, background_tasks: Backg
         cpc_codes=req.cpc_codes,
         ai_rationale=req.ai_rationale,
         max_results=req.max_results,
+        sources=sources,
+        india_options=india_options,
         task_id=task_id,
     )
     return {"status": "processing", "task_id": task_id}
+
+
+@app.post("/api/captcha/{task_id}")
+async def submit_captcha(task_id: str, req: CaptchaAnswerRequest):
+    future = _captcha_futures.get(task_id)
+    if not future or future.done():
+        raise HTTPException(status_code=404, detail="No active CAPTCHA challenge for this task")
+    answer = req.answer.strip()
+    if not answer:
+        raise HTTPException(status_code=400, detail="CAPTCHA answer cannot be empty")
+    future.set_result(answer)
+    return {"status": "accepted"}
 
 
 @app.post("/api/ai/audit/{search_id}")
@@ -455,7 +671,7 @@ async def stream_task(task_id: str):
 
 # ── Export Helpers ────────────────────────────────────────────────────────────
 
-EXPORT_FIELDS = ["patent_id", "keywords", "title", "relevancy", "abstract", "url",
+EXPORT_FIELDS = ["source", "patent_id", "keywords", "title", "relevancy", "abstract", "url",
                  "confidence_score", "ai_reasoning"]
 
 def _apply_relevancy_filter(patents: list[dict], relevancy_filter: list[str] | None) -> list[dict]:

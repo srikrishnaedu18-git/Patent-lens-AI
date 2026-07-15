@@ -261,6 +261,12 @@ body {
   transition: background-color var(--transition-normal), border-color var(--transition-normal);
 }
 
+.top-bar-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
 .current-project-info h1 {
   font-size: 1.25rem;
   font-weight: 700;
@@ -374,7 +380,8 @@ label {
 }
 
 input[type="text"],
-input[type="number"] {
+input[type="number"],
+select {
   width: 100%;
   padding: 12px 16px;
   border-radius: var(--radius-md);
@@ -387,7 +394,8 @@ input[type="number"] {
   transition: all var(--transition-fast);
 }
 
-input:focus {
+input:focus,
+select:focus {
   border-color: var(--accent);
   box-shadow: 0 0 0 3px rgba(79, 110, 247, 0.25);
 }
@@ -1228,6 +1236,9 @@ textarea#requirement-input:focus {
 
 .settings-body {
   padding: 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
 }
 
 .settings-group {
@@ -1269,7 +1280,8 @@ textarea#requirement-input:focus {
   border-color: var(--border-glow);
 }
 
-.option-card input[type="radio"] {
+.option-card input[type="radio"],
+.option-card input[type="checkbox"] {
   accent-color: var(--accent);
   margin-top: 3px;
   cursor: pointer;
@@ -1291,6 +1303,20 @@ textarea#requirement-input:focus {
   font-size: 0.78rem;
   color: var(--text-secondary);
   line-height: 1.4;
+}
+
+.patent-source-badge {
+  display: inline-flex;
+  align-items: center;
+  min-height: 22px;
+  padding: 3px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--border-color);
+  color: var(--text-secondary);
+  background-color: var(--bg-primary);
+  font-size: 0.72rem;
+  font-weight: 700;
+  white-space: nowrap;
 }
 
 /* History view: AI search metadata display */
@@ -1643,6 +1669,167 @@ textarea#requirement-input:focus {
   display: flex;
   justify-content: flex-end;
   margin-top: 16px;
+}
+
+/* India Patents Options Modal */
+.modal-india-options {
+  max-width: 600px;
+}
+
+.india-options-body {
+  padding: 24px;
+}
+
+.form-group-inline {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  margin-bottom: 20px;
+}
+
+.form-group-inline .field-label {
+  font-weight: 600;
+  font-size: 0.9rem;
+}
+
+.checkbox-label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.9rem;
+  cursor: pointer;
+}
+
+.checkbox-label input[type="checkbox"],
+.checkbox-label input[type="radio"] {
+  width: 16px;
+  height: 16px;
+  accent-color: var(--accent);
+}
+
+.form-grid-2 {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+  margin-bottom: 16px;
+}
+
+.modal-divider {
+  border: none;
+  border-top: 1px solid var(--border-color);
+  margin: 20px 0;
+}
+
+.dynamic-rows-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 12px;
+}
+
+.dynamic-rows-header .field-label {
+  font-weight: 600;
+  font-size: 0.9rem;
+}
+
+.india-query-rows-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  max-height: 250px;
+  overflow-y: auto;
+  padding-right: 4px;
+  margin-bottom: 20px;
+}
+
+.india-query-row {
+  display: grid;
+  grid-template-columns: 140px 1fr 80px auto;
+  gap: 8px;
+  align-items: center;
+  background-color: var(--bg-primary);
+  padding: 8px 12px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border-color);
+}
+
+.india-query-row select,
+.india-query-row input {
+  background-color: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+  color: var(--text-primary);
+  border-radius: var(--radius-sm);
+  padding: 8px;
+  font-size: 0.85rem;
+  outline: none;
+  width: 100%;
+}
+
+.india-query-row select:focus,
+.india-query-row input:focus {
+  border-color: var(--accent);
+}
+
+.btn-remove-row {
+  background: transparent;
+  border: none;
+  color: var(--danger);
+  cursor: pointer;
+  padding: 8px;
+  border-radius: var(--radius-sm);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background-color var(--transition-fast);
+}
+
+.btn-remove-row:hover {
+  background-color: var(--danger-bg);
+}
+
+/* CAPTCHA Modal */
+.modal-captcha {
+  max-width: 400px;
+  text-align: center;
+}
+
+.captcha-body {
+  padding: 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.captcha-description {
+  font-size: 0.9rem;
+  color: var(--text-secondary);
+  line-height: 1.4;
+}
+
+.captcha-image-wrapper {
+  background-color: #ffffff;
+  padding: 12px;
+  border-radius: var(--radius-md);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--border-color);
+  min-height: 80px;
+}
+
+.captcha-image-wrapper img {
+  max-width: 100%;
+  height: auto;
+  display: block;
+}
+
+#captcha-form input[type="text"] {
+  width: 100%;
+  padding: 12px;
+  text-align: center;
+  font-size: 1.2rem;
+  letter-spacing: 2px;
+  font-weight: 600;
 }
 
 

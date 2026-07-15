@@ -17,14 +17,19 @@ import asyncio
 import csv
 import argparse
 import logging
+import os
+import base64
 import sys
 import textwrap
 import time
 from pathlib import Path
 from datetime import datetime
-from typing import Callable, Optional
+from typing import Awaitable, Callable, Optional
 
 from playwright.async_api import async_playwright, TimeoutError as PlaywrightTimeoutError
+from dotenv import load_dotenv
+
+load_dotenv()
 
 logger = logging.getLogger("scraper")
 
@@ -42,8 +47,176 @@ except ImportError:
 # ─────────────────────────────────────────────────────────────────────────────
 
 GOOGLE_PATENTS_SEARCH = "https://patents.google.com/?q={query}&num=20"
+INDIA_PATENTS_BASE = "https://iprsearch.ipindia.gov.in"
+VALID_PATENT_SOURCES = {"google", "india"}
+
+INDIA_SEARCH_FIELDS = {
+    "TI", "ABS", "CSP", "AP", "PN", "patent-number", "PA", "ANC", "ANA",
+    "IN", "INC", "INA", "FO", "IC", "PAP", "PPN",
+}
+INDIA_DATE_FIELDS = {"APD", "PD", "PDG", "PRD"}
+INDIA_LOGIC_FIELDS = {"AND", "OR", "NOT"}
+
+
+def _env_bool(name: str, default: bool = False) -> bool:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    return raw.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _clean_choice(value: str, allowed: set[str], fallback: str) -> str:
+    value = str(value or "").strip()
+    return value if value in allowed else fallback
+
+
+def get_india_options_from_env() -> dict:
+    """Read safe Indian Patent Search defaults from environment variables."""
+    rows = []
+    raw_rows = os.getenv("INDIA_PATENTS_SEARCH_ROWS", "").strip()
+    if raw_rows:
+        try:
+            import json
+            parsed = json.loads(raw_rows)
+            if isinstance(parsed, list):
+                rows = parsed
+        except Exception:
+            logger.warning("[India Scraper] Invalid INDIA_PATENTS_SEARCH_ROWS JSON; using row env defaults.")
+
+    if not rows:
+        rows = [{
+            "field": os.getenv("INDIA_PATENTS_SEARCH_FIELD", "TI"),
+            "text": os.getenv("INDIA_PATENTS_SEARCH_TEXT", ""),
+            "logic": os.getenv("INDIA_PATENTS_ROW_LOGIC", "AND"),
+        }]
+
+    return normalize_india_options({
+        "published": _env_bool("INDIA_PATENTS_PUBLISHED", True),
+        "granted": _env_bool("INDIA_PATENTS_GRANTED", False),
+        "date_field": os.getenv("INDIA_PATENTS_DATE_FIELD", "APD"),
+        "from_date": os.getenv("INDIA_PATENTS_FROM_DATE", ""),
+        "to_date": os.getenv("INDIA_PATENTS_TO_DATE", ""),
+        "logic_field": os.getenv("INDIA_PATENTS_LOGIC_FIELD", "AND"),
+        "rows": rows,
+    })
+
+
+def normalize_india_options(options: Optional[dict] = None) -> dict:
+    """Normalize India Patent Search options from env or UI overrides."""
+    options = options or {}
+    published = bool(options.get("published", True))
+    granted = bool(options.get("granted", False))
+    if not published and not granted:
+        published = True
+
+    rows_in = options.get("rows") or []
+    rows: list[dict] = []
+    for row in rows_in:
+        if not isinstance(row, dict):
+            continue
+        rows.append({
+            "field": _clean_choice(row.get("field", "TI"), INDIA_SEARCH_FIELDS, "TI"),
+            "text": str(row.get("text", "") or "").strip(),
+            "logic": _clean_choice(row.get("logic", "AND"), INDIA_LOGIC_FIELDS, "AND"),
+        })
+    if not rows:
+        rows = [{"field": "TI", "text": "", "logic": "AND"}]
+
+    return {
+        "published": published,
+        "granted": granted,
+        "date_field": _clean_choice(options.get("date_field", "APD"), INDIA_DATE_FIELDS, "APD"),
+        "from_date": str(options.get("from_date", "") or "").strip(),
+        "to_date": str(options.get("to_date", "") or "").strip(),
+        "logic_field": _clean_choice(options.get("logic_field", "AND"), INDIA_LOGIC_FIELDS, "AND"),
+        "rows": rows[:5],
+    }
+
+def normalize_sources(sources: Optional[list[str]] = None) -> list[str]:
+    """Return a de-duplicated, validated patent source list."""
+    if not sources:
+        return ["google"]
+
+    normalized: list[str] = []
+    for source in sources:
+        value = str(source or "").strip().lower()
+        if value == "both":
+            value = ""
+            for expanded in ("google", "india"):
+                if expanded not in normalized:
+                    normalized.append(expanded)
+            continue
+        if value not in VALID_PATENT_SOURCES:
+            raise ValueError(f"Unsupported patent source: {source}")
+        if value not in normalized:
+            normalized.append(value)
+
+    return normalized or ["google"]
+
 
 async def scrape_patents(
+    query: str,
+    max_results: int = 20,
+    progress_callback: Optional[Callable[[str], None]] = None,
+    sources: Optional[list[str]] = None,
+    india_options: Optional[dict] = None,
+    captcha_callback: Optional[Callable[[str], Awaitable[str]]] = None,
+) -> list[dict]:
+    """
+    Scrape patents from one or more configured sources and normalize the output.
+
+    Returns dicts with the app's canonical keys:
+      rank, patent_id, title, abstract, url, source
+    """
+    selected_sources = normalize_sources(sources)
+    all_results: list[dict] = []
+    errors: list[str] = []
+
+    source_handlers = {
+        "google": scrape_google_patents,
+        "india": scrape_india_patents,
+    }
+
+    for source in selected_sources:
+        handler = source_handlers[source]
+        try:
+            if progress_callback:
+                progress_callback(f"Starting {source.title()} Patents search for: {query[:80]}")
+            if source == "india":
+                results = await handler(
+                    query,
+                    max_results,
+                    progress_callback=progress_callback,
+                    india_options=india_options,
+                    captcha_callback=captcha_callback,
+                )
+            else:
+                results = await handler(query, max_results, progress_callback=progress_callback)
+            all_results.extend(results)
+        except Exception as exc:
+            message = f"{source.title()} Patents failed: {exc}"
+            logger.error("[Scraper] %s", message, exc_info=True)
+            errors.append(message)
+            if progress_callback:
+                progress_callback(message)
+
+    if not all_results and errors:
+        raise RuntimeError("; ".join(errors))
+
+    seen: set[str] = set()
+    unique: list[dict] = []
+    for result in all_results:
+        key = f"{result.get('source', '')}:{result.get('patent_id') or result.get('title', '')}"
+        if key in seen:
+            continue
+        seen.add(key)
+        result["rank"] = len(unique) + 1
+        unique.append(result)
+
+    return unique[: max(1, max_results * len(selected_sources))]
+
+
+async def scrape_google_patents(
     query: str,
     max_results: int = 20,
     progress_callback: Optional[Callable[[str], None]] = None,
@@ -184,6 +357,7 @@ async def scrape_patents(
                 "abstract": abstract.strip() if abstract else "—",
                 "patent_id": patent_id,
                 "url":      url_href,
+                "source":   "Google Patents",
             })
 
             _log(f"  [{idx:02d}] {patent_id} — {(title or '(no title)')[:60]}")
@@ -191,6 +365,226 @@ async def scrape_patents(
         await browser.close()
 
     return results
+
+
+async def scrape_india_patents(
+    query: str,
+    max_results: int = 20,
+    progress_callback: Optional[Callable[[str], None]] = None,
+    india_options: Optional[dict] = None,
+    captcha_callback: Optional[Callable[[str], Awaitable[str]]] = None,
+) -> list[dict]:
+    """
+    Search the Indian Patent Advanced Search portal and normalize results.
+
+    IP India's public search currently presents a CAPTCHA. This scraper supports
+    a compliant manual-CAPTCHA flow when INDIA_PATENTS_HEADFUL=1 is set:
+    Playwright opens a visible browser, fills the query, then waits for the user
+    to solve the CAPTCHA and submit the search.
+    """
+    def _log(msg: str):
+        logger.info(msg)
+        if progress_callback:
+            try:
+                progress_callback(msg)
+            except Exception as cb_err:
+                logger.debug("progress_callback error: %s", cb_err)
+
+    options = normalize_india_options(india_options or get_india_options_from_env())
+    url = f"{INDIA_PATENTS_BASE}/PublicSearch/"
+    results: list[dict] = []
+
+    async with async_playwright() as pw:
+        browser = await pw.chromium.launch(
+            headless=True,
+            args=["--no-sandbox", "--disable-setuid-sandbox"],
+        )
+        context = await browser.new_context(
+            viewport={"width": 1366, "height": 950},
+            user_agent=(
+                "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
+                "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+            ),
+        )
+        page = await context.new_page()
+
+        _log(f"Navigating to Indian Patent Search: {url}")
+        await page.goto(url, wait_until="domcontentloaded", timeout=45_000)
+        await page.wait_for_selector("select[name='ItemField1']", timeout=20_000)
+
+        await _apply_india_search_options(page, query, options)
+
+        captcha_visible = await page.locator("#CaptchaText").count() > 0
+        if captcha_visible:
+            if not captcha_callback:
+                await browser.close()
+                raise RuntimeError("Indian Patent Search requires CAPTCHA, but no CAPTCHA handler is configured.")
+            await _solve_india_captcha(page, captcha_callback, _log)
+        else:
+            await page.click("input[type='submit'][value='Search']")
+
+        await page.wait_for_selector("#tableData tbody tr", timeout=45_000)
+
+        ip_value = ""
+        try:
+            ip_value = await page.locator("input#IP").first.input_value(timeout=1000)
+        except Exception:
+            pass
+
+        rows = await _extract_india_result_rows(page, max_results)
+        _log(f"Found {len(rows)} Indian patent result rows for query: {query[:60]}")
+
+        for idx, row in enumerate(rows, start=1):
+            app_no = row.get("application_number", "").strip()
+            title = row.get("title", "").strip() or "—"
+            abstract = ""
+            detail_title = ""
+            if app_no:
+                try:
+                    detail = await _fetch_india_patent_detail(context, app_no, ip_value)
+                    abstract = detail.get("abstract", "")
+                    detail_title = detail.get("title", "")
+                except Exception as exc:
+                    _log(f"Could not fetch Indian patent detail for {app_no}: {str(exc)[:100]}")
+
+            results.append({
+                "rank": idx,
+                "title": detail_title or title,
+                "abstract": abstract or "—",
+                "patent_id": app_no,
+                "url": f"{INDIA_PATENTS_BASE}/PublicSearch/PublicationSearch/PatentDetails",
+                "source": "Indian Patents",
+            })
+            _log(f"  [{idx:02d}] IN {app_no} — {(detail_title or title)[:60]}")
+
+        await browser.close()
+
+    return results
+
+
+async def _apply_india_search_options(page, query: str, options: dict) -> None:
+    """Fill the IP India search form using normalized options."""
+    if await page.locator("#Published").count():
+        await page.locator("#Published").set_checked(bool(options["published"]))
+    if await page.locator("#Granted").count():
+        await page.locator("#Granted").set_checked(bool(options["granted"]))
+
+    await page.select_option("#DateField", options["date_field"])
+    await page.fill("#FromDate", options["from_date"])
+    await page.fill("#ToDate", options["to_date"])
+    await page.select_option("#LogicField", options["logic_field"])
+
+    rows = options["rows"] or [{"field": "TI", "text": "", "logic": "AND"}]
+    for idx, row in enumerate(rows, start=1):
+        if idx > 1:
+            await page.click("#btnAddRow")
+            await page.wait_for_selector(f"select[name='ItemField{idx}']", timeout=5_000)
+
+        await page.select_option(f"select[name='ItemField{idx}']", row["field"])
+        await page.fill(f"input[name='TextField{idx}']", row["text"] or query)
+        await page.select_option(f"select[name='LogicField{idx}']", row["logic"])
+
+
+async def _solve_india_captcha(
+    page,
+    captcha_callback: Callable[[str], Awaitable[str]],
+    log_callback: Callable[[str], None],
+) -> None:
+    """Send CAPTCHA image to the app, wait for the answer, and submit."""
+    for attempt in range(1, 4):
+        captcha = page.locator("#Captcha")
+        image_bytes = await captcha.screenshot(type="png")
+        image_data_url = "data:image/png;base64," + base64.b64encode(image_bytes).decode("ascii")
+        log_callback(f"Indian Patent Search CAPTCHA required (attempt {attempt}/3).")
+        answer = (await captcha_callback(image_data_url)).strip()
+        if not answer:
+            raise RuntimeError("Indian Patent Search CAPTCHA was not provided.")
+
+        await page.fill("#CaptchaText", answer)
+        await page.click("input[type='submit'][value='Search']")
+        try:
+            await page.wait_for_selector("#tableData tbody tr", timeout=10_000)
+            return
+        except PlaywrightTimeoutError:
+            if attempt >= 3:
+                raise RuntimeError("Indian Patent Search CAPTCHA failed after 3 attempts.")
+            log_callback("CAPTCHA was not accepted. Refreshing and asking again.")
+            if await page.locator("img[onclick='CaptchaLoad()']").count():
+                await page.locator("img[onclick='CaptchaLoad()']").click()
+                await page.wait_for_timeout(1000)
+
+
+async def _extract_india_result_rows(page, max_results: int) -> list[dict]:
+    """Extract application number/title rows from the IP India result table."""
+    return await page.evaluate(
+        """
+        (maxResults) => {
+          const rows = Array.from(document.querySelectorAll("#tableData tbody tr"));
+          return rows.slice(0, maxResults).map((row) => {
+            const cells = Array.from(row.querySelectorAll("td"));
+            const appButton = row.querySelector("button[name='ApplicationNumber']");
+            return {
+              application_number: (appButton?.value || cells[0]?.innerText || "").trim(),
+              title: (row.querySelector("td.title")?.innerText || cells[1]?.innerText || "").trim(),
+              application_date: (cells[2]?.innerText || "").trim(),
+              status: (cells[3]?.innerText || "").trim()
+            };
+          }).filter((item) => item.application_number || item.title);
+        }
+        """,
+        max_results,
+    )
+
+
+async def _fetch_india_patent_detail(context, application_number: str, ip_value: str = "") -> dict:
+    """POST to the IP India detail endpoint and parse title + abstract."""
+    response = await context.request.post(
+        f"{INDIA_PATENTS_BASE}/PublicSearch/PublicationSearch/PatentDetails",
+        form={
+            "ApplicationNumber": application_number,
+            "IP": ip_value,
+            "ConnectionName": "PublicationConnection",
+        },
+        timeout=45_000,
+    )
+    if not response.ok:
+        raise RuntimeError(f"detail request returned HTTP {response.status}")
+
+    html = await response.text()
+    detail_page = await context.new_page()
+    try:
+        await detail_page.set_content(html, wait_until="domcontentloaded")
+        return await detail_page.evaluate(
+            """
+            () => {
+              const clean = (value) => (value || "").replace(/\\s+/g, " ").trim();
+              let title = "";
+              let abstract = "";
+              const rows = Array.from(document.querySelectorAll("tr"));
+              for (const row of rows) {
+                const cells = Array.from(row.querySelectorAll("td"));
+                if (cells.length < 2) continue;
+                const label = clean(cells[0].innerText).replace(/:$/, "").toLowerCase();
+                if (label === "invention title") {
+                  title = clean(cells[1].innerText);
+                }
+                if (cells[0].innerText.toLowerCase().includes("abstract")) {
+                  abstract = clean(row.innerText.replace(/^\\s*Abstract:\\s*/i, ""));
+                }
+              }
+              if (!abstract) {
+                const abstractCell = Array.from(document.querySelectorAll("td"))
+                  .find((td) => td.innerText.toLowerCase().includes("abstract:"));
+                if (abstractCell) {
+                  abstract = clean(abstractCell.innerText.replace(/^\\s*Abstract:\\s*/i, ""));
+                }
+              }
+              return { title, abstract };
+            }
+            """
+        )
+    finally:
+        await detail_page.close()
 
 
 async def _extract_text(element, selectors: list[str]) -> str:
@@ -359,6 +753,12 @@ def main():
         default="patents_results",
         help='Output file base name (default: patents_results)'
     )
+    parser.add_argument(
+        "--source", "-s",
+        choices=["google", "india", "both"],
+        default="google",
+        help="Patent source to scrape: google, india, or both (default: google)"
+    )
     args = parser.parse_args()
 
     out_dir  = Path(__file__).parent
@@ -374,7 +774,8 @@ def main():
     print(f"{'='*60}\n")
 
     start = time.time()
-    results = asyncio.run(scrape_patents(args.query, args.max))
+    sources = ["google", "india"] if args.source == "both" else [args.source]
+    results = asyncio.run(scrape_patents(args.query, args.max, sources=sources))
     elapsed = time.time() - start
 
     if not results:

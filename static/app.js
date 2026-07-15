@@ -7,9 +7,12 @@ let state = {
   downloadMode: "all",
   searchMode: "manual",
   auditMode: "sequential",
+  searchSources: ["google"],
   aiResponse: null,
   activeFilter: [],          // e.g. ["Red", "Yellow"]
-  activeRequirement: ""      // stored requirement text for re-auditing
+  activeRequirement: "",     // stored requirement text for re-auditing
+  indiaOptions: null,
+  activeCaptchaTaskId: null
 };
 
 // ── DOM References ───────────────────────────────────────────────────────────
@@ -108,9 +111,32 @@ const elModalAlert = document.getElementById("modal-alert");
 const elAlertMessage = document.getElementById("alert-message");
 const elBtnAlertOk = document.getElementById("btn-alert-ok");
 
+// India options & CAPTCHA DOM elements
+const elBtnIndiaOptions = document.getElementById("btn-india-options");
+const elModalIndiaOptions = document.getElementById("modal-india-options");
+const elBtnCloseIndiaOptions = document.getElementById("btn-close-india-options");
+const elIndiaOptionsForm = document.getElementById("india-options-form");
+const elIndiaOptPublished = document.getElementById("india-opt-published");
+const elIndiaOptGranted = document.getElementById("india-opt-granted");
+const elIndiaOptDateField = document.getElementById("india-opt-date-field");
+const elIndiaOptLogicField = document.getElementById("india-opt-logic-field");
+const elIndiaOptFromDate = document.getElementById("india-opt-from-date");
+const elIndiaOptToDate = document.getElementById("india-opt-to-date");
+const elBtnIndiaAddRow = document.getElementById("btn-india-add-row");
+const elIndiaQueryRowsContainer = document.getElementById("india-query-rows-container");
+const elBtnIndiaCancel = document.getElementById("btn-india-cancel");
+
+const elModalCaptcha = document.getElementById("modal-captcha");
+const elCaptchaImg = document.getElementById("captcha-img");
+const elCaptchaForm = document.getElementById("captcha-form");
+const elCaptchaInput = document.getElementById("captcha-input");
+const elBtnCaptchaSubmit = document.getElementById("btn-captcha-submit");
+
 // ── Initialization ───────────────────────────────────────────────────────────
 document.addEventListener("DOMContentLoaded", () => {
   initTheme();
+  initSearchSources();
+  initIndiaOptions();
   loadProjects();
   setupEventListeners();
 });
@@ -137,6 +163,43 @@ function setTheme(theme) {
 
 function toggleTheme() {
   setTheme(state.theme === "dark" ? "light" : "dark");
+}
+
+function initSearchSources() {
+  const saved = JSON.parse(localStorage.getItem("searchSources") || "null");
+  if (Array.isArray(saved) && saved.length > 0) {
+    state.searchSources = saved.filter(src => ["google", "india"].includes(src));
+  }
+  if (state.searchSources.length === 0) state.searchSources = ["google"];
+  syncSourceCheckboxes();
+}
+
+function syncSourceCheckboxes() {
+  document.querySelectorAll('input[name="search-source"]').forEach(cb => {
+    cb.checked = state.searchSources.includes(cb.value);
+  });
+}
+
+function getSourceLabel() {
+  const labels = {
+    google: "Google Patents",
+    india: "Indian Patents"
+  };
+  return state.searchSources.map(src => labels[src] || src).join(", ");
+}
+
+function handleSearchSourcesChange() {
+  const selected = Array.from(document.querySelectorAll('input[name="search-source"]:checked'))
+    .map(cb => cb.value)
+    .filter(src => ["google", "india"].includes(src));
+  if (selected.length === 0) {
+    state.searchSources = ["google"];
+    syncSourceCheckboxes();
+    alert("At least one patent search source must be selected.");
+    return;
+  }
+  state.searchSources = selected;
+  localStorage.setItem("searchSources", JSON.stringify(state.searchSources));
 }
 
 // ── Projects Operations ──────────────────────────────────────────────────────
@@ -292,7 +355,7 @@ async function handleManualScrapeSubmit(e) {
   // Reuse Live Log UI to show progress for manual scrapes too
   elLiveFeed.classList.remove("hidden");
   clearLiveLog();
-  writeLogLine("🚀 Initializing manual keyword search...", "info");
+  writeLogLine(`🚀 Initializing manual keyword search across ${getSourceLabel()}...`, "info");
   updateStagePill("planning", "active");
 
   try {
@@ -311,7 +374,9 @@ async function handleManualScrapeSubmit(e) {
       body: JSON.stringify({
         project_id: state.activeProjectId,
         keywords: keywords,
-        max_results: maxResults
+        max_results: maxResults,
+        sources: state.searchSources,
+        india_options: state.indiaOptions
       })
     });
 
@@ -321,12 +386,19 @@ async function handleManualScrapeSubmit(e) {
     }
 
     const result = await response.json();
-    writeLogLine("💾 Search results saved successfully.", "success");
-    updateStagePill("scraping", "done");
-    updateStagePill("complete", "done");
-
-    elKeywordsInput.value = "";
-    renderHistory(result.data);
+    if (result.status === "processing") {
+      writeLogLine(`📡 Connection established. Task ID: ${result.task_id}`, "info");
+      startSSEStream(result.task_id);
+    } else {
+      writeLogLine("💾 Search results saved successfully.", "success");
+      updateStagePill("scraping", "done");
+      updateStagePill("complete", "done");
+      elKeywordsInput.value = "";
+      if (result.data) {
+        renderHistory(result.data);
+      }
+      setManualLoading(false);
+    }
   } catch (err) {
     writeLogLine(`❌ Error: ${err.message}`, "error");
     updateStagePill("scraping", "error");
@@ -466,7 +538,9 @@ async function handleConfirmSearch() {
         cpc_codes: cpcs,
         ai_rationale: state.aiResponse.search_rationale || "",
         max_results: maxResults,
-        audit_mode: state.auditMode
+        audit_mode: state.auditMode,
+        sources: state.searchSources,
+        india_options: state.indiaOptions
       })
     });
 
@@ -503,7 +577,7 @@ function startSSEStream(taskId) {
   eventSource.onmessage = (event) => {
     try {
       const data = JSON.parse(event.data);
-      handleSSEStageUpdate(data);
+      handleSSEStageUpdate(data, taskId);
     } catch (err) {
       console.error("SSE JSON parsing error:", err, event.data);
     }
@@ -513,11 +587,16 @@ function startSSEStream(taskId) {
     console.error("SSE Connection error:", err);
     writeLogLine("⚠️ EventStream disconnected. Checking task completion status...", "warning");
     eventSource.close();
-    setConfirmLoading(false);
+    setPipelineLoading(false);
   };
 }
 
-function handleSSEStageUpdate(data) {
+function setPipelineLoading(isLoading) {
+  setConfirmLoading(isLoading);
+  setManualLoading(isLoading);
+}
+
+function handleSSEStageUpdate(data, taskId) {
   const { stage, message, current, total } = data;
   
   if (stage) {
@@ -540,6 +619,20 @@ function handleSSEStageUpdate(data) {
     writeLogLine(message, type);
   }
 
+  // Handle India Patents CAPTCHA popup
+  if (stage === "captcha") {
+    if (data.captcha_image) {
+      elCaptchaImg.src = data.captcha_image;
+      elCaptchaInput.value = "";
+      elModalCaptcha.classList.remove("hidden");
+      elCaptchaInput.focus();
+      state.activeCaptchaTaskId = taskId;
+    }
+  } else if (stage === "complete" || stage === "error" || stage === "saving" || stage === "auditing") {
+    // If we transition to end stages, hide the captcha modal
+    elModalCaptcha.classList.add("hidden");
+  }
+
   // Audit Progress bar update
   if (stage === "auditing" && total > 0) {
     elAuditProgressBarWrap.classList.remove("hidden");
@@ -557,7 +650,7 @@ function handleSSEStageUpdate(data) {
   if (stage === "complete") {
     updateStagePill("complete", "done");
     writeLogLine("🎉 Agent Pipeline Finished Successfully!", "success");
-    setConfirmLoading(false);
+    setPipelineLoading(false);
     
     // Automatically transition back to requirement input
     setTimeout(() => {
@@ -572,7 +665,7 @@ function handleSSEStageUpdate(data) {
   if (stage === "error") {
     updateStagePill("complete", "error");
     writeLogLine(`❌ Critical Pipeline Error: ${message}`, "error");
-    setConfirmLoading(false);
+    setPipelineLoading(false);
     alert(`Pipeline Error: ${message}`);
   }
 }
@@ -729,6 +822,7 @@ function renderPatentCards(patents, query, searchId) {
     const score = p.confidence_score;
     const relevancy = scoreToRelevancy(score);
     const cardClass = `patent-card relevancy-${relevancy.toLowerCase()}`;
+    const source = p.source || "Google Patents";
 
     return `
       <div class="${cardClass}" id="patent-card-${p.id}" data-relevancy="${relevancy}">
@@ -744,6 +838,7 @@ function renderPatentCards(patents, query, searchId) {
               </a>
               <h4 class="patent-title">${highlight(p.title)}</h4>
             </div>
+            <span class="patent-source-badge">${escapeHtml(source)}</span>
             <span class="relevancy-badge relevancy-badge--${relevancy.toLowerCase()}">${relevancy}</span>
           </div>
           <p class="patent-abstract">${highlight(p.abstract)}</p>
@@ -856,6 +951,7 @@ function showSettingsModal() {
   // Highlight currently selected radio button
   const radio = elModalSettings.querySelector(`input[name="audit-mode"][value="${state.auditMode}"]`);
   if (radio) radio.checked = true;
+  syncSourceCheckboxes();
 }
 
 function hideSettingsModal() {
@@ -931,12 +1027,13 @@ async function showSavedKeywordsModal() {
       `;
 
       div.querySelector(".btn-load-strategy").addEventListener("click", () => {
+        const cleanedQuery = s.query.replace(/\s*\[[^\]]+\]\s*$/, "");
         if (isAi) {
           switchSearchMode("ai");
-          elRequirementInput.value = s.query;
+          elRequirementInput.value = cleanedQuery;
         } else {
           switchSearchMode("manual");
-          elKeywordsInput.value = s.query;
+          elKeywordsInput.value = cleanedQuery;
         }
         elModalSavedKeywords.classList.add("hidden");
       });
@@ -1039,6 +1136,9 @@ function setupEventListeners() {
   elModalSettings.querySelectorAll('input[name="audit-mode"]').forEach(radio => {
     radio.addEventListener("change", handleAuditModeChange);
   });
+  elModalSettings.querySelectorAll('input[name="search-source"]').forEach(checkbox => {
+    checkbox.addEventListener("change", handleSearchSourcesChange);
+  });
 
   // Saved Keywords Modal
   const btnSavedKeywords = document.getElementById("btn-saved-keywords");
@@ -1092,6 +1192,31 @@ function setupEventListeners() {
 
   elBtnGlobalExportCsv.addEventListener("click", () => handleGlobalExport("csv"));
   elBtnGlobalExportPdf.addEventListener("click", () => handleGlobalExport("pdf"));
+
+  // India Options modal listeners
+  if (elBtnIndiaOptions) {
+    elBtnIndiaOptions.addEventListener("click", showIndiaOptionsModal);
+  }
+  if (elBtnCloseIndiaOptions) {
+    elBtnCloseIndiaOptions.addEventListener("click", () => elModalIndiaOptions.classList.add("hidden"));
+  }
+  if (elBtnIndiaCancel) {
+    elBtnIndiaCancel.addEventListener("click", () => elModalIndiaOptions.classList.add("hidden"));
+  }
+  elModalIndiaOptions.addEventListener("click", (e) => {
+    if (e.target === elModalIndiaOptions) elModalIndiaOptions.classList.add("hidden");
+  });
+  if (elIndiaOptionsForm) {
+    elIndiaOptionsForm.addEventListener("submit", saveIndiaOptions);
+  }
+  if (elBtnIndiaAddRow) {
+    elBtnIndiaAddRow.addEventListener("click", () => addRowToUi());
+  }
+
+  // CAPTCHA submit listener
+  if (elCaptchaForm) {
+    elCaptchaForm.addEventListener("submit", handleCaptchaSubmit);
+  }
 }
 
 async function handleCreateProject(e) {
@@ -1132,3 +1257,191 @@ function escapeHtml(text) {
 function escapeRegExp(string) {
   return string.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
+
+const INDIA_SEARCH_FIELDS_MAP = {
+  "TI": "Title",
+  "ABS": "Abstract",
+  "CSP": "Complete Specification",
+  "AP": "Application Number",
+  "PN": "Publication Number",
+  "patent-number": "Patent Number",
+  "PA": "Applicant Name",
+  "ANC": "Applicant Country",
+  "ANA": "Applicant Address",
+  "IN": "Inventor Name",
+  "INC": "Inventor Country",
+  "INA": "Inventor Address",
+  "FO": "Filing Office",
+  "IC": "International Classification",
+  "PAP": "Patent Application Publication",
+  "PPN": "PCT Publication Number"
+};
+
+function getYesterdayDateString() {
+  const yesterday = new Date(Date.now() - 86400000);
+  const dd = String(yesterday.getDate()).padStart(2, '0');
+  const mm = String(yesterday.getMonth() + 1).padStart(2, '0');
+  const yyyy = yesterday.getFullYear();
+  return `${dd}/${mm}/${yyyy}`;
+}
+
+async function initIndiaOptions() {
+  try {
+    const res = await fetch("/api/settings/defaults");
+    if (!res.ok) throw new Error("Could not load backend defaults");
+    const defaults = await res.json();
+
+    // Check if we already have local overrides
+    const local = localStorage.getItem("indiaOptions");
+    if (local) {
+      state.indiaOptions = JSON.parse(local);
+    } else {
+      state.indiaOptions = defaults.india_options;
+    }
+  } catch (err) {
+    console.error("Error loading settings defaults:", err);
+    // Fallback defaults
+    state.indiaOptions = {
+      published: true,
+      granted: false,
+      date_field: "APD",
+      from_date: "01/01/2020",
+      to_date: getYesterdayDateString(),
+      logic_field: "AND",
+      rows: [{ field: "TI", text: "", logic: "AND" }]
+    };
+  }
+
+  // Enforce default date rules if blank
+  if (!state.indiaOptions.from_date) {
+    state.indiaOptions.from_date = "01/01/2020";
+  }
+  if (!state.indiaOptions.to_date) {
+    state.indiaOptions.to_date = getYesterdayDateString();
+  }
+
+  // Enforce mutual exclusivity
+  if (state.indiaOptions.published && state.indiaOptions.granted) {
+    state.indiaOptions.granted = false;
+  }
+}
+
+function showIndiaOptionsModal() {
+  if (!state.indiaOptions) return;
+
+  elIndiaOptPublished.checked = !!state.indiaOptions.published;
+  elIndiaOptGranted.checked = !!state.indiaOptions.granted;
+  elIndiaOptDateField.value = state.indiaOptions.date_field || "APD";
+  elIndiaOptLogicField.value = state.indiaOptions.logic_field || "AND";
+  elIndiaOptFromDate.value = state.indiaOptions.from_date || "01/01/2020";
+  elIndiaOptToDate.value = state.indiaOptions.to_date || getYesterdayDateString();
+
+  // Clear rows
+  elIndiaQueryRowsContainer.innerHTML = "";
+
+  // Render rows
+  const rows = state.indiaOptions.rows || [];
+  rows.forEach(row => addRowToUi(row.field, row.text, row.logic));
+
+  elModalIndiaOptions.classList.remove("hidden");
+}
+
+function addRowToUi(field = "TI", text = "", logic = "AND") {
+  const rowCount = elIndiaQueryRowsContainer.querySelectorAll(".india-query-row").length;
+  if (rowCount >= 5) {
+    alert("Maximum of 5 query rows is allowed.");
+    return;
+  }
+
+  const rowDiv = document.createElement("div");
+  rowDiv.className = "india-query-row";
+
+  // Build field select dropdown
+  let fieldOptions = "";
+  for (const [val, label] of Object.entries(INDIA_SEARCH_FIELDS_MAP)) {
+    fieldOptions += `<option value="${val}" ${val === field ? "selected" : ""}>${label}</option>`;
+  }
+
+  rowDiv.innerHTML = `
+    <select class="row-field">
+      ${fieldOptions}
+    </select>
+    <input type="text" class="row-text" value="${escapeHtml(text)}" placeholder="Query term (leave blank for main keyword)">
+    <select class="row-logic">
+      <option value="AND" ${logic === "AND" ? "selected" : ""}>AND</option>
+      <option value="OR" ${logic === "OR" ? "selected" : ""}>OR</option>
+      <option value="NOT" ${logic === "NOT" ? "selected" : ""}>NOT</option>
+    </select>
+    <button type="button" class="btn-remove-row" title="Remove Row">
+      <svg class="icon-sm" viewBox="0 0 24 24" fill="none"><path d="M19 7L5 7M10 11V17M14 11V17M12 3L12 4M19 7L18 20C18 20.5523 17.5523 21 17 21H7C6.44772 21 6 20.5523 6 20L5 7M10 3L14 3C14.5523 3 15 3.44772 15 4V7H9V4C9 3.44772 9.44772 3 10 3Z" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+    </button>
+  `;
+
+  rowDiv.querySelector(".btn-remove-row").addEventListener("click", () => {
+    rowDiv.remove();
+  });
+
+  elIndiaQueryRowsContainer.appendChild(rowDiv);
+}
+
+function saveIndiaOptions(e) {
+  if (e) e.preventDefault();
+
+  const published = elIndiaOptPublished.checked;
+  const granted = elIndiaOptGranted.checked;
+  if (!published && !granted) {
+    alert("At least one publication type (Published or Granted) must be selected.");
+    return;
+  }
+
+  const rows = [];
+  elIndiaQueryRowsContainer.querySelectorAll(".india-query-row").forEach(rowDiv => {
+    const field = rowDiv.querySelector(".row-field").value;
+    const text = rowDiv.querySelector(".row-text").value.trim();
+    const logic = rowDiv.querySelector(".row-logic").value;
+    rows.push({ field, text, logic });
+  });
+
+  state.indiaOptions = {
+    published,
+    granted,
+    date_field: elIndiaOptDateField.value,
+    from_date: elIndiaOptFromDate.value.trim() || "01/01/2020",
+    to_date: elIndiaOptToDate.value.trim() || getYesterdayDateString(),
+    logic_field: elIndiaOptLogicField.value,
+    rows: rows.length > 0 ? rows : [{ field: "TI", text: "", logic: "AND" }]
+  };
+
+  localStorage.setItem("indiaOptions", JSON.stringify(state.indiaOptions));
+  elModalIndiaOptions.classList.add("hidden");
+}
+
+async function handleCaptchaSubmit(e) {
+  e.preventDefault();
+  const answer = elCaptchaInput.value.trim();
+  const taskId = state.activeCaptchaTaskId;
+  if (!answer || !taskId) return;
+
+  elBtnCaptchaSubmit.disabled = true;
+  elBtnCaptchaSubmit.innerText = "Verifying...";
+
+  try {
+    const res = await fetch(`/api/captcha/${taskId}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ answer })
+    });
+    if (!res.ok) {
+      const err = await res.json();
+      throw new Error(err.detail || "CAPTCHA submission failed");
+    }
+    writeLogLine("Submitted CAPTCHA answer. Waiting for verification...", "info");
+    elModalCaptcha.classList.add("hidden");
+  } catch (err) {
+    alert(`Error submitting CAPTCHA: ${err.message}`);
+  } finally {
+    elBtnCaptchaSubmit.disabled = false;
+    elBtnCaptchaSubmit.innerText = "Verify CAPTCHA";
+  }
+}
+

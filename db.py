@@ -53,6 +53,7 @@ def init_db():
     CREATE TABLE IF NOT EXISTS patents (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         search_id INTEGER NOT NULL,
+        source TEXT DEFAULT 'Google Patents',
         patent_id TEXT NOT NULL,
         title TEXT NOT NULL,
         abstract TEXT NOT NULL,
@@ -73,6 +74,7 @@ def init_db():
         ("searches", "ai_queries",   "TEXT"),
         ("searches", "ai_cpc_codes", "TEXT"),
         ("searches", "ai_rationale", "TEXT"),
+        ("patents",  "source",           "TEXT DEFAULT 'Google Patents'"),
         ("patents",  "confidence_score", "REAL"),
         ("patents",  "ai_reasoning",     "TEXT"),
     ]
@@ -198,7 +200,7 @@ def save_patents(search_id: int, patents: list[dict]):
     Each patent dict should have keys:
       patent_id, title, abstract, url
     Optionally:
-      confidence_score (float), ai_reasoning (str)
+      source (str), confidence_score (float), ai_reasoning (str)
     """
     conn = get_db_connection()
     cursor = conn.cursor()
@@ -207,11 +209,12 @@ def save_patents(search_id: int, patents: list[dict]):
             cursor.execute(
                 """
                 INSERT INTO patents
-                    (search_id, patent_id, title, abstract, url, confidence_score, ai_reasoning)
-                VALUES (?, ?, ?, ?, ?, ?, ?);
+                    (search_id, source, patent_id, title, abstract, url, confidence_score, ai_reasoning)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?);
                 """,
                 (
                     search_id,
+                    p.get("source", "Google Patents"),
                     p.get("patent_id", ""),
                     p.get("title", ""),
                     p.get("abstract", ""),

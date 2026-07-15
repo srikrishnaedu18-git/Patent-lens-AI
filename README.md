@@ -3,7 +3,7 @@
 PatentLens Studio is a local FastAPI web app for running prior-art patent searches against Google Patents. It supports:
 
 - Project-based search history stored in SQLite
-- Manual keyword patent scraping
+- Manual keyword patent scraping from selectable sources
 - AI-assisted search query generation with Gemini
 - On-demand AI relevance audits for scraped patents
 - Live progress updates with Server-Sent Events
@@ -91,11 +91,14 @@ AI features require a Gemini API key. Manual keyword scraping can work without t
 
    ```env
    GEMINI_API_KEY=your_actual_gemini_api_key_here
+   INDIA_PATENTS_HEADFUL=0
    ```
 
 4. Keep `.env` private. It is already listed in `.gitignore`, so it should not be committed.
 
 The backend loads this key in `ai_agent.py` with `python-dotenv`.
+
+`INDIA_PATENTS_HEADFUL` is optional. Set it to `1` if you want to use Indian Patent Search from IP India's public portal. That site requires CAPTCHA, so the scraper opens a visible browser and waits while you solve the CAPTCHA and submit the search.
 
 ## Run the Web App
 
@@ -131,9 +134,13 @@ The SQLite database is created automatically at startup as `patent_lens.db`.
 2. Choose a search mode:
    - Manual Search: enter comma-separated keywords and scrape Google Patents directly.
    - AI Search: enter a product or invention requirement, let Gemini generate search queries and CPC codes, then confirm the search.
-3. Review saved search runs in the project history.
-4. Run AI Audit on a saved search to score patents as Red, Yellow, Green, or Unaudited.
-5. Export all, selected, or filtered results as CSV or PDF.
+3. Open Settings and choose search sources:
+   - Google Patents
+   - Indian Patents
+   - Both
+4. Review saved search runs in the project history.
+5. Run AI Audit on a saved search to score patents as Red, Yellow, Green, or Unaudited.
+6. Export all, selected, or filtered results as CSV or PDF.
 
 ## Optional CLI Scraper
 
@@ -142,6 +149,14 @@ The SQLite database is created automatically at startup as `patent_lens.db`.
 ```bash
 source venv/bin/activate
 python scraper.py --query "smart irrigation sensor IoT" --max 20
+```
+
+Choose a source:
+
+```bash
+python scraper.py --query "smart irrigation sensor IoT" --max 20 --source google
+python scraper.py --query "smart irrigation sensor IoT" --max 20 --source india
+python scraper.py --query "smart irrigation sensor IoT" --max 20 --source both
 ```
 
 Custom output file base name:
@@ -217,6 +232,16 @@ http://127.0.0.1:8001
 
 Try a smaller `max_results` value, simpler keywords, or more specific technical terms. Google Patents can also rate-limit or change page markup, which may temporarily affect scraping.
 
+### Indian Patent Search requires CAPTCHA
+
+Set this in `.env`:
+
+```env
+INDIA_PATENTS_HEADFUL=1
+```
+
+Restart the server. When an Indian Patents scrape starts, a visible browser opens. Solve the CAPTCHA in that browser and click Search; the scraper will continue after the results table loads.
+
 ### PDF export fails
 
 Make sure `fpdf2` is installed:
@@ -248,4 +273,5 @@ The frontend uses these main endpoints:
 - The app is intentionally local-first. It stores data in SQLite beside the source files.
 - `server.py` mounts `static/` at `/`, so the web UI and API are served by the same FastAPI process.
 - Database schema creation and simple migrations run automatically through `init_db()` when the server starts.
+- Patent records are normalized to `source`, `patent_id`, `title`, `abstract`, and `url` regardless of source.
 - AI calls use Gemini structured output through the `google-genai` package.
