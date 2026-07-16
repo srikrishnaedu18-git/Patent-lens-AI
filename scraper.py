@@ -570,10 +570,13 @@ async def _apply_india_search_options(page, query: str, options: dict) -> None:
 async def _wait_for_captcha_loaded(page) -> None:
     """Force refresh the captcha image and wait for it to be fully loaded with a timestamp."""
     captcha_loc = page.locator("#Captcha")
-    await captcha_loc.wait_for(state="visible", timeout=15000)
+    # Use "attached" (in DOM) not "visible" — after a POST the img element
+    # exists in the DOM before it finishes rendering/loading, so "visible"
+    # can time out even when the element is perfectly usable.
+    await captcha_loc.wait_for(state="attached", timeout=15000)
     
-    refresh_loc = page.locator("img[onclick='CaptchaLoad()']")
-    await refresh_loc.wait_for(state="visible", timeout=15000)
+    refresh_loc = page.locator("img[onclick='CaptchaLoad()']") 
+    await refresh_loc.wait_for(state="attached", timeout=15000)
     
     # Hide any datepicker/calendar overlays that might block clicking the refresh button
     await page.evaluate("""
@@ -677,14 +680,17 @@ async def _solve_india_captcha(
             log_callback("CAPTCHA was not accepted. Refreshing and asking again.")
             continue
             
-        # Fallback: give the results table a bit more time to render
+        # Fallback: give the results table a short extra window to appear
         try:
-            await page.wait_for_selector("text=Total Document(s):", timeout=15_000)
+            await page.wait_for_selector("text=Total Document(s):", timeout=5_000)
             return True
         except PlaywrightTimeoutError:
-            if attempt >= 5:
-                raise RuntimeError("Indian Patent Search CAPTCHA failed after 5 attempts.")
-            log_callback("CAPTCHA was not accepted. Refreshing and asking again.")
+            pass
+        
+        # Still nothing — CAPTCHA must have been wrong and page reloaded silently
+        if attempt >= 5:
+            raise RuntimeError("Indian Patent Search CAPTCHA failed after 5 attempts.")
+        log_callback("CAPTCHA was not accepted. Refreshing and asking again.")
 
 
 async def _extract_india_result_rows(page, max_results: int) -> list[dict]:
