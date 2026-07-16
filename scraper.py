@@ -467,45 +467,29 @@ async def scrape_india_patents(
         await _apply_india_search_options(page, query, options)
 
         captcha_visible = await page.locator("#CaptchaText").count() > 0
-        search_succeeded = True
         if captcha_visible:
             if not captcha_callback:
                 await browser.close()
                 raise RuntimeError("Indian Patent Search requires CAPTCHA, but no CAPTCHA handler is configured.")
-            search_succeeded = await _solve_india_captcha(page, captcha_callback, _log, dialog_messages)
+            found = await _solve_india_captcha(page, captcha_callback, _log, dialog_messages)
+            if not found:
+                await browser.close()
+                return []
         else:
-            dialog_messages.clear()
             await page.click("input[type='submit'][value='Search']")
-            
-            search_succeeded = None
-            for poll_attempt in range(150): # Up to 30 seconds
-                await asyncio.sleep(0.2)
+            try:
+                await page.wait_for_selector("#tableData tbody tr", timeout=45_000)
+            except PlaywrightTimeoutError:
+                # Check if portal showed a "No Record Found" dialog
                 if dialog_messages:
                     last_msg = dialog_messages[-1].lower()
                     if "no record" in last_msg or "record not found" in last_msg:
                         _log("ℹ️ Indian Patents Search returned: No Record Found.")
-                        search_succeeded = False
-                        break
-                    else:
-                        raise RuntimeError(f"Indian Patents portal error: {dialog_messages[-1]}")
-                
-                if await page.locator("text=Total Document(s):").count() > 0 or await page.locator("#tableData").count() > 0:
-                    search_succeeded = True
-                    break
-                    
-                current_url = page.url.lower()
-                if "searchresult" in current_url or "patentdetails" in current_url:
-                    search_succeeded = True
-                    break
-            
-            if search_succeeded is None:
-                search_succeeded = True # Fallback if no error and timeout elapsed
+                        await browser.close()
+                        return []
+                raise
 
-        if not search_succeeded:
-            await browser.close()
-            return []
-
-        await page.wait_for_selector("text=Total Document(s):", timeout=45_000)
+        await page.wait_for_selector("#tableData tbody tr", timeout=45_000)
 
         ip_value = ""
         try:
@@ -567,49 +551,6 @@ async def _apply_india_search_options(page, query: str, options: dict) -> None:
         await page.select_option(f"select[name='LogicField{idx}']", row["logic"])
 
 
-async def _wait_for_captcha_loaded(page) -> None:
-    """Force refresh the captcha image and wait for it to be fully loaded with a timestamp."""
-    captcha_loc = page.locator("#Captcha")
-    # Use "attached" (in DOM) not "visible" — after a POST the img element
-    # exists in the DOM before it finishes rendering/loading, so "visible"
-    # can time out even when the element is perfectly usable.
-    await captcha_loc.wait_for(state="attached", timeout=15000)
-    
-    refresh_loc = page.locator("img[onclick='CaptchaLoad()']") 
-    await refresh_loc.wait_for(state="attached", timeout=15000)
-    
-    # Hide any datepicker/calendar overlays that might block clicking the refresh button
-    await page.evaluate("""
-        document.querySelectorAll(".datepicker-dropdown, .datepicker, #ui-datepicker-div").forEach(el => el.style.display = "none");
-    """)
-    
-    # Click refresh to load a fresh captcha with a unique timestamp (bypassing browser cache)
-    await refresh_loc.click(force=True)
-    
-    # Wait for the image src to contain "?" and be fully loaded
-    js_code = """
-        async () => {
-            const img = document.getElementById("Captcha");
-            if (!img) return;
-            
-            // Wait for src to contain "?"
-            let attempts = 0;
-            while (!img.getAttribute("src").includes("?") && attempts < 100) {
-                await new Promise(r => setTimeout(r, 50));
-                attempts++;
-            }
-            
-            // Wait for image loading to complete
-            attempts = 0;
-            while ((!img.complete || img.naturalWidth === 0) && attempts < 100) {
-                await new Promise(r => setTimeout(r, 50));
-                attempts++;
-            }
-        }
-    """
-    await page.evaluate(js_code)
-
-
 async def _solve_india_captcha(
     page,
     captcha_callback: Callable[[str], Awaitable[str]],
@@ -618,79 +559,41 @@ async def _solve_india_captcha(
 ) -> bool:
     """
     Send CAPTCHA image to the app, wait for the answer, and submit.
-    Returns True if search succeeded, False if no records found.
+    Returns True if results were found, False if No Records Found dialog appeared.
+    Raises RuntimeError if CAPTCHA fails after all attempts.
     """
     for attempt in range(1, 6):
-        # 1. Force refresh and wait for captcha image to be fully loaded
-        await _wait_for_captcha_loaded(page)
-        
-        # 2. Hide any datepicker/calendar overlays that might obscure the CAPTCHA image
-        await page.evaluate("""
-            document.querySelectorAll(".datepicker-dropdown, .datepicker, #ui-datepicker-div").forEach(el => el.style.display = "none");
-        """)
-        
         captcha = page.locator("#Captcha")
         image_bytes = await captcha.screenshot(type="png")
         image_data_url = "data:image/png;base64," + base64.b64encode(image_bytes).decode("ascii")
         log_callback(f"Indian Patent Search CAPTCHA required (attempt {attempt}/5).")
-        
+
         answer = (await captcha_callback(image_data_url)).strip()
         if not answer:
             raise RuntimeError("Indian Patent Search CAPTCHA was not provided.")
 
         await page.fill("#CaptchaText", answer)
-        
-        # Clear dialog messages list before clicking Search to capture new alerts
         dialog_messages.clear()
-        
         await page.click("input[type='submit'][value='Search']")
-        
-        # Wait for the postback navigation to complete
+
         try:
-            await page.wait_for_load_state("load", timeout=15_000)
-        except Exception:
-            pass
-            
-        # Wait slightly to ensure any dialog event handler has processed the alert
-        await asyncio.sleep(1.0)
-        
-        # Check dialog messages (portal fires these for CAPTCHA errors and no-results)
-        if dialog_messages:
-            last_msg = dialog_messages[-1].lower()
-            if "no record" in last_msg or "record not found" in last_msg:
-                log_callback("ℹ️ Indian Patents Search returned: No Records Found.")
-                return False
-            elif "correct captcha" in last_msg or "invalid captcha" in last_msg or "enter captcha" in last_msg:
-                log_callback("CAPTCHA was not accepted. Refreshing and asking again.")
-                if attempt >= 5:
-                    raise RuntimeError("Indian Patent Search CAPTCHA failed after 5 attempts.")
-                continue
-            else:
-                raise RuntimeError(f"Indian Patents portal error: {dialog_messages[-1]}")
-            
-        # Check if the search results have loaded
-        if await page.locator("text=Total Document(s):").count() > 0:
+            await page.wait_for_selector("#tableData tbody tr", timeout=15_000)
             return True
-            
-        # Check if we are still on the CAPTCHA page — portal silently reloads
-        # with a new CAPTCHA when the answer was wrong (no dialog fired)
-        if await page.locator("#Captcha").count() > 0:
+        except PlaywrightTimeoutError:
+            # Check if portal responded with No Record Found dialog
+            if dialog_messages:
+                last_msg = dialog_messages[-1].lower()
+                if "no record" in last_msg or "record not found" in last_msg:
+                    log_callback("ℹ️ Indian Patents Search returned: No Records Found.")
+                    return False
+
             if attempt >= 5:
                 raise RuntimeError("Indian Patent Search CAPTCHA failed after 5 attempts.")
             log_callback("CAPTCHA was not accepted. Refreshing and asking again.")
-            continue
-            
-        # Fallback: give the results table a short extra window to appear
-        try:
-            await page.wait_for_selector("text=Total Document(s):", timeout=5_000)
-            return True
-        except PlaywrightTimeoutError:
-            pass
-        
-        # Still nothing — CAPTCHA must have been wrong and page reloaded silently
-        if attempt >= 5:
-            raise RuntimeError("Indian Patent Search CAPTCHA failed after 5 attempts.")
-        log_callback("CAPTCHA was not accepted. Refreshing and asking again.")
+            # Click refresh icon to get a new CAPTCHA image
+            if await page.locator("img[onclick='CaptchaLoad()']").count():
+                await page.locator("img[onclick='CaptchaLoad()']").click()
+                await page.wait_for_timeout(1500)
 
 
 async def _extract_india_result_rows(page, max_results: int) -> list[dict]:
