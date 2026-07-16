@@ -1846,6 +1846,20 @@ async function initIndiaOptions() {
     const local = localStorage.getItem("indiaOptions");
     if (local) {
       state.indiaOptions = JSON.parse(local);
+      if (state.indiaOptions) {
+        if (state.indiaOptions.from_date && state.indiaOptions.from_date.includes("/")) {
+          const parts = state.indiaOptions.from_date.split("/");
+          if (parts.length === 3 && parseInt(parts[0], 10) > 12) {
+            state.indiaOptions.from_date = `${parts[1]}/${parts[0]}/${parts[2]}`;
+          }
+        }
+        if (state.indiaOptions.to_date && state.indiaOptions.to_date.includes("/")) {
+          const parts = state.indiaOptions.to_date.split("/");
+          if (parts.length === 3 && parseInt(parts[0], 10) > 12) {
+            state.indiaOptions.to_date = `${parts[1]}/${parts[0]}/${parts[2]}`;
+          }
+        }
+      }
     } else {
       state.indiaOptions = defaults.india_options;
     }

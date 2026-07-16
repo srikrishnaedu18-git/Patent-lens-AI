@@ -247,8 +247,8 @@ async def _solve_captcha_with_twocaptcha(image_data_url: str, queue) -> str:
             logger.info("[2CAPTCHA] CAPTCHA submitted successfully. ID: %s. Polling...", captcha_id)
 
             # 2. Polling for the result
-            for poll in range(12): # Poll for up to 60 seconds (12 * 5s)
-                await asyncio.sleep(5)
+            for poll in range(30): # Poll for up to 60 seconds (30 * 2s)
+                await asyncio.sleep(2)
                 res_response = await client.get(
                     "https://2captcha.com/res.php",
                     params={

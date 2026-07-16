@@ -472,7 +472,7 @@ async def scrape_india_patents(
             if not captcha_callback:
                 await browser.close()
                 raise RuntimeError("Indian Patent Search requires CAPTCHA, but no CAPTCHA handler is configured.")
-            found = await _solve_india_captcha(page, captcha_callback, _log, dialog_messages)
+            found = await _solve_india_captcha(page, captcha_callback, _log, dialog_messages, query, options)
             if not found:
                 await browser.close()
                 return []
@@ -572,6 +572,8 @@ async def _solve_india_captcha(
     captcha_callback: Callable[[str], Awaitable[str]],
     log_callback: Callable[[str], None],
     dialog_messages: list[str],
+    query: str,
+    options: dict,
 ) -> bool:
     """
     Send CAPTCHA image to the app, wait for the answer, and submit.
@@ -579,6 +581,20 @@ async def _solve_india_captcha(
     Raises RuntimeError if CAPTCHA fails after all attempts.
     """
     for attempt in range(1, 6):
+        # Check if the search terms are missing (e.g. due to form reset on failed captcha)
+        need_refill = False
+        try:
+            current_val = await page.locator("input[name='TextField1']").first.input_value(timeout=1000)
+            expected_val = (options["rows"][0]["text"] if options["rows"] else query) or query
+            if current_val != expected_val:
+                need_refill = True
+        except Exception:
+            need_refill = True
+
+        if need_refill:
+            log_callback("Form was reset/cleared. Re-applying search options...")
+            await _apply_india_search_options(page, query, options)
+
         # Hide any calendar popup divs to prevent them from obscuring the CAPTCHA image
         await page.evaluate("""
             document.querySelectorAll("div.datepicker, .datepicker-dropdown, #ui-datepicker-div").forEach(el => el.style.display = "none");
