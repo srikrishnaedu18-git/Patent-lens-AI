@@ -538,8 +538,22 @@ async def _apply_india_search_options(page, query: str, options: dict) -> None:
         await page.locator("#Granted").set_checked(bool(options["granted"]))
 
     await page.select_option("#DateField", options["date_field"])
+    
+    # Fill FromDate, dispatch change event, and blur to close the picker
     await page.fill("#FromDate", options["from_date"])
+    await page.locator("#FromDate").evaluate("el => el.dispatchEvent(new Event('change', { bubbles: true }))")
+    await page.locator("#FromDate").blur()
+    
+    # Fill ToDate, dispatch change event, and blur to close the picker
     await page.fill("#ToDate", options["to_date"])
+    await page.locator("#ToDate").evaluate("el => el.dispatchEvent(new Event('change', { bubbles: true }))")
+    await page.locator("#ToDate").blur()
+    
+    # Hide any calendar popup div that might have appeared (specifically div.datepicker, not .datepicker)
+    await page.evaluate("""
+        document.querySelectorAll("div.datepicker, .datepicker-dropdown, #ui-datepicker-div").forEach(el => el.style.display = "none");
+    """)
+    
     await page.select_option("#LogicField", options["logic_field"])
 
     rows = options["rows"] or [{"field": "TI", "text": "", "logic": "AND"}]
@@ -565,6 +579,11 @@ async def _solve_india_captcha(
     Raises RuntimeError if CAPTCHA fails after all attempts.
     """
     for attempt in range(1, 6):
+        # Hide any calendar popup divs to prevent them from obscuring the CAPTCHA image
+        await page.evaluate("""
+            document.querySelectorAll("div.datepicker, .datepicker-dropdown, #ui-datepicker-div").forEach(el => el.style.display = "none");
+        """)
+        
         captcha = page.locator("#Captcha")
         image_bytes = await captcha.screenshot(type="png")
         image_data_url = "data:image/png;base64," + base64.b64encode(image_bytes).decode("ascii")
