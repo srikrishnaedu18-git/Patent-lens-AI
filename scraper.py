@@ -539,11 +539,13 @@ async def _apply_india_search_options(page, query: str, options: dict) -> None:
 
     await page.select_option("#DateField", options["date_field"])
     
-    # Set FromDate and ToDate directly via JS property to bypass datepicker overlays
+    # Set FromDate and ToDate directly via JS property and dispatch change event to bypass datepicker overlays
     if options["from_date"]:
         await page.evaluate(f"document.getElementById('FromDate').value = '{options['from_date']}'")
+        await page.locator("#FromDate").evaluate("el => el.dispatchEvent(new Event('change', { bubbles: true }))")
     if options["to_date"]:
         await page.evaluate(f"document.getElementById('ToDate').value = '{options['to_date']}'")
+        await page.locator("#ToDate").evaluate("el => el.dispatchEvent(new Event('change', { bubbles: true }))")
         
     await page.select_option("#LogicField", options["logic_field"])
 

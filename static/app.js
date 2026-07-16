@@ -1833,7 +1833,7 @@ function getYesterdayDateString() {
   const dd = String(yesterday.getDate()).padStart(2, '0');
   const mm = String(yesterday.getMonth() + 1).padStart(2, '0');
   const yyyy = yesterday.getFullYear();
-  return `${dd}/${mm}/${yyyy}`;
+  return `${mm}/${dd}/${yyyy}`;
 }
 
 async function initIndiaOptions() {
@@ -1849,13 +1849,13 @@ async function initIndiaOptions() {
       if (state.indiaOptions) {
         if (state.indiaOptions.from_date && state.indiaOptions.from_date.includes("/")) {
           const parts = state.indiaOptions.from_date.split("/");
-          if (parts.length === 3 && parseInt(parts[0], 10) <= 12 && parseInt(parts[1], 10) > 12) {
+          if (parts.length === 3 && parseInt(parts[0], 10) > 12) {
             state.indiaOptions.from_date = `${parts[1]}/${parts[0]}/${parts[2]}`;
           }
         }
         if (state.indiaOptions.to_date && state.indiaOptions.to_date.includes("/")) {
           const parts = state.indiaOptions.to_date.split("/");
-          if (parts.length === 3 && parseInt(parts[0], 10) <= 12 && parseInt(parts[1], 10) > 12) {
+          if (parts.length === 3 && parseInt(parts[0], 10) > 12) {
             state.indiaOptions.to_date = `${parts[1]}/${parts[0]}/${parts[2]}`;
           }
         }
