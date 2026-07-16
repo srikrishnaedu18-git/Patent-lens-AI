@@ -672,20 +672,17 @@ async def _solve_india_captcha(
                 submission_result = True
                 break
                 
-            # D. Check if we are still on the search page and the CAPTCHA text box is cleared,
-            # meaning the page reloaded with a new CAPTCHA but without firing a dialog alert.
-            if await page.locator("#Captcha").count() > 0:
-                val = await page.locator("#CaptchaText").first.input_value()
-                if not val: # text box cleared
-                    submission_result = False
-                    break
                     
-        if submission_result == True:
+        if submission_result is None:
+            # Timed out (30s) waiting for a definitive outcome — treat as retry
+            submission_result = False
+
+        if submission_result is True:
             return True
         elif submission_result == "empty":
             return False
         else:
-            # Captcha was incorrect or timed out
+            # Captcha was incorrect or timed out — retry
             if attempt >= 5:
                 raise RuntimeError("Indian Patent Search CAPTCHA failed after 5 attempts.")
             log_callback("CAPTCHA was not accepted. Refreshing and asking again.")

@@ -451,13 +451,14 @@ async function handleManualScrapeSubmit(e) {
     localStorage.setItem("indiaOptions", JSON.stringify(state.indiaOptions));
 
     // Construct human-readable combined query string
+    // Note: do NOT wrap text in extra quotes — the user may have already added their own
     let queryStr = "";
     for (let i = 0; i < rows.length; i++) {
       if (!rows[i].text) continue;
       if (queryStr) {
         queryStr += ` ${rows[i].logic} `;
       }
-      queryStr += `${rows[i].field}: "${rows[i].text}"`;
+      queryStr += `${rows[i].field}: ${rows[i].text}`;
     }
     keywords = queryStr;
   }
