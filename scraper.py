@@ -489,7 +489,8 @@ async def scrape_india_patents(
                         return []
                 raise
 
-        await page.wait_for_selector("#tableData tbody tr", timeout=45_000)
+        # Results confirmed inside _solve_india_captcha already
+
 
         ip_value = ""
         try:
