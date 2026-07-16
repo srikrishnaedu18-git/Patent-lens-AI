@@ -437,8 +437,9 @@ async def scrape_india_patents(
     results: list[dict] = []
 
     async with async_playwright() as pw:
+        _india_headless = os.getenv("INDIA_PATENT_HEADLESS", "true").strip().lower() != "false"
         browser = await pw.chromium.launch(
-            headless=True,
+            headless=_india_headless,
             args=["--no-sandbox", "--disable-setuid-sandbox"],
         )
         context = await browser.new_context(
