@@ -9,11 +9,16 @@ let state = {
   auditMode: "sequential",
   searchSources: ["google"],
   aiResponse: null,
-  activeFilter: [],          // e.g. ["Red", "Yellow"]
-  activeRequirement: "",     // stored requirement text for re-auditing
+  activeFilter: [],
+  activeRequirement: "",
   indiaOptions: null,
-  activeCaptchaTaskId: null
+  activeCaptchaTaskId: null,
+  captchaMode: "auto",       // "auto" | "manual"
+  captchaService: "2captcha", // currently only "2captcha" for auto
+  activeTaskId: null,
+  activeFlow: null
 };
+
 
 // ── DOM References ───────────────────────────────────────────────────────────
 const elProjectsList = document.getElementById("projects-list");
@@ -63,6 +68,8 @@ const elAuditProgressText = document.getElementById("audit-progress-text");
 const elAuditProgressPct = document.getElementById("audit-progress-pct");
 const elAuditProgressBar = document.getElementById("audit-progress-bar");
 const elHistoryContainer = document.getElementById("history-container");
+const elBtnTerminateScrape = document.getElementById("btn-terminate-scrape");
+
 
 // Pills
 const pills = {
@@ -74,10 +81,21 @@ const pills = {
 };
 
 // Global Export Elements
-const elToggleDownloadAll = document.getElementById("toggle-download-all");
-const elToggleDownloadSelected = document.getElementById("toggle-download-selected");
+const elSelectAllHistoryCheckbox = document.getElementById("select-all-history-checkbox");
+const elBtnGlobalDelete = document.getElementById("btn-global-delete");
 const elBtnGlobalExportCsv = document.getElementById("btn-global-export-csv");
 const elBtnGlobalExportPdf = document.getElementById("btn-global-export-pdf");
+
+// Delete confirmation modal elements
+const elModalDeleteConfirm = document.getElementById("modal-delete-confirm");
+const elDeleteSelectedList = document.getElementById("delete-selected-list");
+const elBtnDeleteCancel = document.getElementById("btn-delete-cancel");
+const elBtnDeleteConfirmAction = document.getElementById("btn-delete-confirm-action");
+
+// CAPTCHA Mode settings
+const elBtnCaptchaModeAuto = document.getElementById("btn-captcha-mode-auto");
+const elBtnCaptchaModeManual = document.getElementById("btn-captcha-mode-manual");
+const elCaptchaServiceSection = document.getElementById("captcha-service-section");
 
 // Modals
 const elModalProject = document.getElementById("modal-project");
@@ -264,12 +282,13 @@ async function selectProject(id, name, createdAt) {
   });
 
   elActiveProjectTitle.innerText = name;
-  const dateObj = new Date(createdAt);
+  const dateObj = parseUtcDate(createdAt);
   elActiveProjectDate.innerText = `Created: ${dateObj.toLocaleDateString()} at ${dateObj.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}`;
+
   
-  state.downloadMode = "all";
-  elToggleDownloadAll.classList.add("active");
-  elToggleDownloadSelected.classList.remove("active");
+  if (elSelectAllHistoryCheckbox) {
+    elSelectAllHistoryCheckbox.checked = false;
+  }
   
   elEmptyState.classList.add("hidden");
   elProjectPanel.classList.remove("hidden");
@@ -351,11 +370,17 @@ async function handleManualScrapeSubmit(e) {
   if (!keywords) return;
 
   setManualLoading(true);
+  if (elBtnTerminateScrape) {
+    elBtnTerminateScrape.classList.remove("hidden");
+    elBtnTerminateScrape.disabled = false;
+    elBtnTerminateScrape.innerText = "Stop";
+  }
   
   // Reuse Live Log UI to show progress for manual scrapes too
   elLiveFeed.classList.remove("hidden");
   clearLiveLog();
   writeLogLine(`🚀 Initializing manual keyword search across ${getSourceLabel()}...`, "info");
+  initStagePillsForFlow("manual_scrape");
   updateStagePill("planning", "active");
 
   try {
@@ -376,7 +401,9 @@ async function handleManualScrapeSubmit(e) {
         keywords: keywords,
         max_results: maxResults,
         sources: state.searchSources,
-        india_options: state.indiaOptions
+        india_options: state.indiaOptions,
+        captcha_mode: state.captchaMode,
+        captcha_service: state.captchaService
       })
     });
 
@@ -387,6 +414,7 @@ async function handleManualScrapeSubmit(e) {
 
     const result = await response.json();
     if (result.status === "processing") {
+      state.activeTaskId = result.task_id;
       writeLogLine(`📡 Connection established. Task ID: ${result.task_id}`, "info");
       startSSEStream(result.task_id);
     } else {
@@ -398,14 +426,16 @@ async function handleManualScrapeSubmit(e) {
         renderHistory(result.data);
       }
       setManualLoading(false);
+      if (elBtnTerminateScrape) elBtnTerminateScrape.classList.add("hidden");
     }
   } catch (err) {
     writeLogLine(`❌ Error: ${err.message}`, "error");
     updateStagePill("scraping", "error");
     alert(`Error running scrape: ${err.message}`);
-  } finally {
     setManualLoading(false);
+    if (elBtnTerminateScrape) elBtnTerminateScrape.classList.add("hidden");
   }
+
 }
 
 function setManualLoading(isLoading) {
@@ -526,6 +556,7 @@ async function handleConfirmSearch() {
   elLiveFeed.classList.remove("hidden");
   clearLiveLog();
   writeLogLine("🚀 Submitting pipeline execution request to backend...", "info");
+  initStagePillsForFlow("ai_search");
 
   try {
     const res = await fetch("/api/ai/confirm-search", {
@@ -540,7 +571,9 @@ async function handleConfirmSearch() {
         max_results: maxResults,
         audit_mode: state.auditMode,
         sources: state.searchSources,
-        india_options: state.indiaOptions
+        india_options: state.indiaOptions,
+        captcha_mode: state.captchaMode,
+        captcha_service: state.captchaService
       })
     });
 
@@ -550,8 +583,10 @@ async function handleConfirmSearch() {
     }
 
     const { task_id } = await res.json();
+    state.activeTaskId = task_id;
     writeLogLine(`📡 Connection established. Task ID: ${task_id}`, "info");
     startSSEStream(task_id);
+
   } catch (err) {
     writeLogLine(`❌ Failed to start background task: ${err.message}`, "error");
     setConfirmLoading(false);
@@ -571,7 +606,30 @@ function setConfirmLoading(isLoading) {
 }
 
 // ── SSE Stream Listener ──────────────────────────────────────────────────────
+function initStagePillsForFlow(flowName) {
+  state.activeFlow = flowName;
+  const stages = ["planning", "scraping", "auditing", "saving", "complete"];
+  
+  // Define which stages are active/used in each flow
+  const flows = {
+    manual_scrape: ["planning", "scraping", "saving", "complete"],
+    ai_search: ["planning", "scraping", "saving", "complete"],
+    ai_audit: ["auditing", "complete"]
+  };
+  
+  const activeStages = flows[flowName] || [];
+  
+  stages.forEach(s => {
+    if (activeStages.includes(s)) {
+      updateStagePill(s, "waiting");
+    } else {
+      updateStagePill(s, "skipped");
+    }
+  });
+}
+
 function startSSEStream(taskId) {
+  state.activeTaskId = taskId;
   const eventSource = new EventSource(`/api/ai/stream/${taskId}`);
 
   eventSource.onmessage = (event) => {
@@ -594,19 +652,36 @@ function startSSEStream(taskId) {
 function setPipelineLoading(isLoading) {
   setConfirmLoading(isLoading);
   setManualLoading(isLoading);
+  if (!isLoading) {
+    if (elBtnTerminateScrape) {
+      elBtnTerminateScrape.classList.add("hidden");
+    }
+  }
 }
 
 function handleSSEStageUpdate(data, taskId) {
   const { stage, message, current, total } = data;
   
   if (stage) {
-    updateStagePill(stage, "active");
-    // Mark previous stages as done
     const stagesOrder = ["planning", "scraping", "auditing", "saving", "complete"];
     const currentIdx = stagesOrder.indexOf(stage);
+    
+    updateStagePill(stage, "active");
+    
+    // Set all previous stages that are part of the active flow to "done"
+    const flows = {
+      manual_scrape: ["planning", "scraping", "saving", "complete"],
+      ai_search: ["planning", "scraping", "saving", "complete"],
+      ai_audit: ["auditing", "complete"]
+    };
+    const activeStages = flows[state.activeFlow] || [];
+    
     if (currentIdx !== -1) {
       for (let i = 0; i < currentIdx; i++) {
-        updateStagePill(stagesOrder[i], "done");
+        const prevStage = stagesOrder[i];
+        if (activeStages.includes(prevStage)) {
+          updateStagePill(prevStage, "done");
+        }
       }
     }
   }
@@ -614,9 +689,38 @@ function handleSSEStageUpdate(data, taskId) {
   if (message) {
     let type = "info";
     if (message.includes("✅")) type = "success";
-    if (message.includes("❌")) type = "skip";
+    if (message.includes("❌")) type = "error";
     if (message.includes("⚠️")) type = "warning";
+    if (message.includes("⛔")) type = "warning";
     writeLogLine(message, type);
+  }
+
+  // Render the CAPTCHA image inside the live log console if provided
+  if (data.captcha_image) {
+    const time = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+    const line = document.createElement("div");
+    line.className = "log-line log-info flex flex-col gap-1 my-2";
+    
+    const labelSpan = document.createElement("span");
+    labelSpan.className = "log-text text-xs text-slate-400";
+    labelSpan.innerHTML = `<span class="log-time">[${time}]</span> Captured CAPTCHA Image:`;
+    
+    const imgEl = document.createElement("img");
+    imgEl.src = data.captcha_image;
+    imgEl.style.display = "block";
+    imgEl.style.marginTop = "4px";
+    imgEl.style.marginBottom = "4px";
+    imgEl.style.border = "1px solid var(--border-color)";
+    imgEl.style.borderRadius = "var(--radius-sm)";
+    imgEl.style.maxHeight = "50px";
+    imgEl.style.maxWidth = "200px";
+    imgEl.style.background = "#fff";
+    imgEl.style.padding = "2px";
+    
+    line.appendChild(labelSpan);
+    line.appendChild(imgEl);
+    elLiveLog.appendChild(line);
+    elLiveLog.scrollTop = elLiveLog.scrollHeight;
   }
 
   // Handle India Patents CAPTCHA popup
@@ -648,14 +752,37 @@ function handleSSEStageUpdate(data, taskId) {
   }
 
   if (stage === "complete") {
-    updateStagePill("complete", "done");
-    writeLogLine("🎉 Agent Pipeline Finished Successfully!", "success");
+    const flows = {
+      manual_scrape: ["planning", "scraping", "saving", "complete"],
+      ai_search: ["planning", "scraping", "saving", "complete"],
+      ai_audit: ["auditing", "complete"]
+    };
+    const activeStages = flows[state.activeFlow] || [];
+    activeStages.forEach(s => {
+      updateStagePill(s, "done");
+    });
+
+    if (data.terminated && data.remaining_keywords && data.remaining_keywords.length > 0) {
+      writeLogLine(`⛔ Scrape terminated. Loaded ${data.remaining_keywords.length} remaining keywords back into input.`, "warning");
+      elKeywordsInput.value = data.remaining_keywords.join(", ");
+      switchSearchMode("manual");
+    } else {
+      if (state.activeFlow === "manual_scrape") {
+        writeLogLine("🎉 Manual Scrape Finished Successfully!", "success");
+        elKeywordsInput.value = "";
+      } else {
+        writeLogLine("🎉 Agent Pipeline Finished Successfully!", "success");
+      }
+    }
+    
     setPipelineLoading(false);
     
-    // Automatically transition back to requirement input
-    setTimeout(() => {
-      resetAISearchPanel();
-    }, 4000);
+    if (state.activeFlow !== "manual_scrape") {
+      // Automatically transition back to requirement input for AI flows
+      setTimeout(() => {
+        resetAISearchPanel();
+      }, 4000);
+    }
     
     if (data.data) {
       renderHistory(data.data);
@@ -671,10 +798,12 @@ function handleSSEStageUpdate(data, taskId) {
 }
 
 function updateStagePill(stage, status) {
-  const pill = pills[stage];
+  const pillKey = stage === "complete" ? "complete" : stage;
+  const pill = pills[pillKey];
   if (!pill) return;
   pill.className = `stage-pill ${status}`;
 }
+
 
 function writeLogLine(text, type = "info") {
   const time = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
@@ -700,7 +829,9 @@ async function loadProjectHistory(projectId) {
 function renderHistory(searches) {
   elHistoryContainer.innerHTML = "";
 
-  if (searches.length === 0) {
+  const activeSearches = (searches || []).filter(s => s.search_mode !== "failed");
+
+  if (activeSearches.length === 0) {
     elHistoryContainer.innerHTML = `
       <div class="meta-text" style="padding: 40px; text-align: center; background: var(--bg-secondary); border-radius: var(--radius-lg); border: 1px dashed var(--border-color);">
         No prior art searches recorded for this project yet.
@@ -709,13 +840,14 @@ function renderHistory(searches) {
     return;
   }
 
-  searches.forEach(s => {
+  activeSearches.forEach(s => {
     const card = document.createElement("div");
     card.className = "query-card";
     card.id = `query-card-${s.id}`;
     
-    const dateStr = new Date(s.created_at).toLocaleString([], { dateStyle: 'short', timeStyle: 'short' });
+    const dateStr = parseUtcDate(s.created_at).toLocaleString([], { dateStyle: 'short', timeStyle: 'short' });
     const isAi = s.search_mode === "ai";
+
 
     card.innerHTML = `
       <div class="query-card-header">
@@ -751,6 +883,7 @@ function renderHistory(searches) {
         // trigger handler to enforce active filter validation if user manually selects all
         if (isChecked) handlePatentCheckboxChange(cb);
       });
+      updateGlobalSelectAllState();
     });
 
     const childCheckboxes = card.querySelectorAll(".patent-select-checkbox");
@@ -758,6 +891,7 @@ function renderHistory(searches) {
       cb.addEventListener("change", () => {
         const allChecked = Array.from(childCheckboxes).every(c => c.checked);
         headerCheckbox.checked = allChecked;
+        updateGlobalSelectAllState();
       });
     });
 
@@ -932,16 +1066,12 @@ async function downloadExport(format, patentIds = null) {
 }
 
 function handleGlobalExport(format) {
-  if (state.downloadMode === "all") {
-    downloadExport(format, null);
-  } else {
-    const checkedCbs = document.querySelectorAll(".patent-select-checkbox:checked");
-    if (checkedCbs.length === 0) {
-      alert("Please select at least one patent checkbox, or switch to 'Download All'.");
-      return;
-    }
+  const checkedCbs = document.querySelectorAll(".patent-select-checkbox:checked");
+  if (checkedCbs.length > 0) {
     const patentIds = Array.from(checkedCbs).map(cb => parseInt(cb.dataset.patentId, 10));
     downloadExport(format, patentIds);
+  } else {
+    downloadExport(format, null);
   }
 }
 
@@ -969,8 +1099,7 @@ async function triggerAudit(searchId, queryText) {
   elLiveFeed.classList.remove("hidden");
   clearLiveLog();
   writeLogLine(`🤖 Initiating Gemini audit for search run #${searchId}...`, "info");
-  updateStagePill("planning", "done");
-  updateStagePill("scraping", "done");
+  initStagePillsForFlow("ai_audit");
   updateStagePill("auditing", "active");
 
   try {
@@ -984,6 +1113,7 @@ async function triggerAudit(searchId, queryText) {
       throw new Error(err.detail || "Audit request rejected.");
     }
     const { task_id } = await res.json();
+    state.activeTaskId = task_id;
     writeLogLine(`📡 Connection established. Audit Task ID: ${task_id}`, "info");
     startSSEStream(task_id);
   } catch (err) {
@@ -991,7 +1121,62 @@ async function triggerAudit(searchId, queryText) {
   }
 }
 
+
 // ── Saved Search Strategies Modal ────────────────────────────────────────────
+function parseUtcDate(dateStr) {
+  if (!dateStr) return new Date();
+  if (dateStr.includes("Z") || dateStr.includes("+") || dateStr.includes("-") && dateStr.length > 10 && dateStr.includes("T")) {
+    return new Date(dateStr);
+  }
+  return new Date(dateStr + " UTC");
+}
+
+function createStrategyItemElement(s) {
+  const div = document.createElement("div");
+  div.className = "saved-keyword-item";
+  const isAi = s.search_mode === "ai";
+  const isFailed = s.search_mode === "failed";
+  
+  const dateObj = parseUtcDate(s.created_at);
+  const dateStr = dateObj.toLocaleDateString() + ", " + dateObj.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  
+  let tagClass = "manual-tag";
+  let tagText = "Manual";
+  if (isAi) {
+    tagClass = "ai-tag";
+    tagText = "AI Strategy";
+  } else if (isFailed) {
+    tagClass = "failed-tag";
+    tagText = "Failed / Remaining";
+  }
+
+  div.innerHTML = `
+    <div style="display: flex; align-items: center; gap: 10px; width: 100%; min-width: 0;">
+      <input type="checkbox" class="strategy-item-checkbox" data-query="${escapeHtml(s.query)}" data-mode="${s.search_mode}" style="cursor: pointer; width: 16px; height: 16px; flex-shrink: 0;" />
+      <div class="saved-keyword-info" style="margin-left: 0;">
+        <span class="query-tag ${tagClass}">${tagText}</span>
+        <span class="saved-keyword-text" title="${escapeHtml(s.query)}">${escapeHtml(s.query)}</span>
+        <span class="meta-text">${dateStr}</span>
+      </div>
+    </div>
+    <button type="button" class="btn-primary btn-sm btn-load-strategy" style="flex-shrink: 0;">Load</button>
+  `;
+
+  div.querySelector(".btn-load-strategy").addEventListener("click", () => {
+    const cleanedQuery = s.query.replace(/\s*\[[^\]]+\]\s*$/, "");
+    if (isAi) {
+      switchSearchMode("ai");
+      elRequirementInput.value = cleanedQuery;
+    } else {
+      switchSearchMode("manual");
+      elKeywordsInput.value = cleanedQuery;
+    }
+    elModalSavedKeywords.classList.add("hidden");
+  });
+
+  return div;
+}
+
 async function showSavedKeywordsModal() {
   if (!state.activeProjectId) {
     alert("Please select a project first.");
@@ -1011,39 +1196,131 @@ async function showSavedKeywordsModal() {
       return;
     }
 
-    searches.forEach(s => {
-      const div = document.createElement("div");
-      div.className = "saved-keyword-item";
-      const isAi = s.search_mode === "ai";
-      const dateStr = new Date(s.created_at).toLocaleDateString();
-      
-      div.innerHTML = `
-        <div class="saved-keyword-info">
-          <span class="query-tag ${isAi ? 'ai-tag' : 'manual-tag'}">${isAi ? 'AI Strategy' : 'Manual'}</span>
-          <span class="saved-keyword-text" title="${escapeHtml(s.query)}">${escapeHtml(s.query)}</span>
-          <span class="meta-text">${dateStr}</span>
-        </div>
-        <button type="button" class="btn-primary btn-sm btn-load-strategy">Load</button>
-      `;
+    // Divide into scraped vs failed/remaining
+    const scrapedList = searches.filter(s => s.search_mode !== "failed");
+    const failedList = searches.filter(s => s.search_mode === "failed");
 
-      div.querySelector(".btn-load-strategy").addEventListener("click", () => {
-        const cleanedQuery = s.query.replace(/\s*\[[^\]]+\]\s*$/, "");
-        if (isAi) {
-          switchSearchMode("ai");
-          elRequirementInput.value = cleanedQuery;
-        } else {
-          switchSearchMode("manual");
-          elKeywordsInput.value = cleanedQuery;
-        }
-        elModalSavedKeywords.classList.add("hidden");
-      });
+    // Helper to build a section with a select-all checkbox and Load Selected button
+    function createSection(titleText, items, isFailedSection) {
+      const section = document.createElement("div");
+      section.className = "saved-strategy-section";
+      if (isFailedSection) {
+        section.style.marginTop = "24px";
+      }
 
-      elSavedKeywordsList.appendChild(div);
-    });
+      const headerRow = document.createElement("div");
+      headerRow.className = "section-header-row";
+      headerRow.style.display = "flex";
+      headerRow.style.alignItems = "center";
+      headerRow.style.justifyContent = "space-between";
+      headerRow.style.borderBottom = "1px solid var(--border-color)";
+      headerRow.style.paddingBottom = "6px";
+      headerRow.style.marginBottom = "12px";
+
+      const leftSide = document.createElement("div");
+      leftSide.style.display = "flex";
+      leftSide.style.alignItems = "center";
+      leftSide.style.gap = "8px";
+
+      const selectAllCb = document.createElement("input");
+      selectAllCb.type = "checkbox";
+      selectAllCb.className = "section-select-all";
+      selectAllCb.style.cursor = "pointer";
+      selectAllCb.style.width = "16px";
+      selectAllCb.style.height = "16px";
+
+      const titleEl = document.createElement("h4");
+      titleEl.className = "section-title-sm";
+      titleEl.style.margin = "0";
+      titleEl.style.fontSize = "0.85rem";
+      titleEl.style.textTransform = "uppercase";
+      titleEl.style.color = isFailedSection ? "#f59e0b" : "var(--text-secondary)";
+      titleEl.innerText = titleText;
+
+      leftSide.appendChild(selectAllCb);
+      leftSide.appendChild(titleEl);
+
+      const loadSelectedBtn = document.createElement("button");
+      loadSelectedBtn.type = "button";
+      loadSelectedBtn.className = "btn-primary btn-sm btn-load-selected";
+      loadSelectedBtn.style.fontSize = "0.75rem";
+      loadSelectedBtn.style.padding = "4px 8px";
+      loadSelectedBtn.style.borderRadius = "var(--radius-sm)";
+      loadSelectedBtn.innerText = "Load Selected";
+
+      headerRow.appendChild(leftSide);
+      headerRow.appendChild(loadSelectedBtn);
+
+      const container = document.createElement("div");
+      container.className = "strategies-sublist";
+
+      section.appendChild(headerRow);
+      section.appendChild(container);
+
+      if (items.length === 0) {
+        container.innerHTML = isFailedSection 
+          ? '<p class="meta-text">No failed or remaining keywords recorded.</p>'
+          : '<p class="meta-text">No successfully scraped keywords yet.</p>';
+        selectAllCb.disabled = true;
+        loadSelectedBtn.disabled = true;
+        loadSelectedBtn.style.opacity = "0.5";
+      } else {
+        items.forEach(s => {
+          const div = createStrategyItemElement(s);
+          container.appendChild(div);
+        });
+
+        // Set up Event Listeners
+        selectAllCb.addEventListener("change", () => {
+          const checkboxes = container.querySelectorAll(".strategy-item-checkbox");
+          checkboxes.forEach(cb => {
+            cb.checked = selectAllCb.checked;
+          });
+        });
+
+        container.addEventListener("change", (e) => {
+          if (e.target.classList.contains("strategy-item-checkbox")) {
+            const checkboxes = Array.from(container.querySelectorAll(".strategy-item-checkbox"));
+            const allChecked = checkboxes.every(cb => cb.checked);
+            selectAllCb.checked = allChecked;
+          }
+        });
+
+        loadSelectedBtn.addEventListener("click", () => {
+          const checkedCbs = Array.from(container.querySelectorAll(".strategy-item-checkbox:checked"));
+          if (checkedCbs.length === 0) {
+            alert("Please select at least one keyword first.");
+            return;
+          }
+          const queries = checkedCbs.map(cb => cb.dataset.query.replace(/\s*\[[^\]]+\]\s*$/, ""));
+          const joinedQuery = queries.join(", ");
+          
+          const anyAi = checkedCbs.some(cb => cb.dataset.mode === "ai");
+          if (anyAi) {
+            switchSearchMode("ai");
+            elRequirementInput.value = joinedQuery;
+          } else {
+            switchSearchMode("manual");
+            elKeywordsInput.value = joinedQuery;
+          }
+          elModalSavedKeywords.classList.add("hidden");
+        });
+      }
+
+      return section;
+    }
+
+    const scrapedSection = createSection("Successfully Scraped", scrapedList, false);
+    const failedSection = createSection("Failed or Remaining Keywords", failedList, true);
+
+    elSavedKeywordsList.appendChild(scrapedSection);
+    elSavedKeywordsList.appendChild(failedSection);
+
   } catch (err) {
     elSavedKeywordsList.innerHTML = `<p class="log-error">Error loading saved searches: ${err.message}</p>`;
   }
 }
+
 
 // ── Relevancy Filter Modal ───────────────────────────────────────────────────
 function showFilterModal() {
@@ -1098,9 +1375,38 @@ function resetFilter() {
   hideFilterModal();
 }
 
+async function handleTerminateScrape() {
+  if (!state.activeTaskId) return;
+  if (!confirm("Are you sure you want to stop the scrape? Remaining keywords will be loaded back into the input bar.")) {
+    return;
+  }
+  elBtnTerminateScrape.disabled = true;
+  elBtnTerminateScrape.innerText = "Stopping...";
+  try {
+    const res = await fetch(`/api/scrape/cancel/${state.activeTaskId}`, { method: "POST" });
+    if (!res.ok) {
+      const err = await res.json();
+      alert(`Could not stop scrape: ${err.detail || "Unknown error"}`);
+      elBtnTerminateScrape.disabled = false;
+      elBtnTerminateScrape.innerText = "Stop";
+    } else {
+      writeLogLine("⛔ Stop request sent. Waiting for the current keyword scrape to finish...", "warning");
+    }
+  } catch (err) {
+    console.error(err);
+    alert("Error sending stop request");
+    elBtnTerminateScrape.disabled = false;
+    elBtnTerminateScrape.innerText = "Stop";
+  }
+}
+
 // ── Event Handlers ───────────────────────────────────────────────────────────
 function setupEventListeners() {
   elThemeToggle.addEventListener("click", toggleTheme);
+
+  if (elBtnTerminateScrape) {
+    elBtnTerminateScrape.addEventListener("click", handleTerminateScrape);
+  }
 
   // Mode buttons
   elBtnModeManual.addEventListener("click", () => switchSearchMode("manual"));
@@ -1110,6 +1416,7 @@ function setupEventListeners() {
   elScrapeFormManual.addEventListener("submit", handleManualScrapeSubmit);
   elBtnGenerateQueries.addEventListener("click", handleGenerateQueries);
   elBtnConfirmSearch.addEventListener("click", handleConfirmSearch);
+
   elBtnBackToInput.addEventListener("click", () => {
     elAiStepInput.classList.remove("hidden");
     elAiStepReview.classList.add("hidden");
@@ -1138,6 +1445,29 @@ function setupEventListeners() {
   });
   elModalSettings.querySelectorAll('input[name="search-source"]').forEach(checkbox => {
     checkbox.addEventListener("change", handleSearchSourcesChange);
+  });
+
+  // CAPTCHA Mode Toggle
+  if (elBtnCaptchaModeAuto) {
+    elBtnCaptchaModeAuto.addEventListener("click", () => {
+      state.captchaMode = "auto";
+      elBtnCaptchaModeAuto.classList.add("active");
+      elBtnCaptchaModeManual.classList.remove("active");
+      if (elCaptchaServiceSection) elCaptchaServiceSection.style.display = "";
+    });
+  }
+  if (elBtnCaptchaModeManual) {
+    elBtnCaptchaModeManual.addEventListener("click", () => {
+      state.captchaMode = "manual";
+      elBtnCaptchaModeManual.classList.add("active");
+      elBtnCaptchaModeAuto.classList.remove("active");
+      if (elCaptchaServiceSection) elCaptchaServiceSection.style.display = "none";
+    });
+  }
+  elModalSettings.querySelectorAll('input[name="captcha-service"]').forEach(radio => {
+    radio.addEventListener("change", (e) => {
+      state.captchaService = e.target.value;
+    });
   });
 
   // Saved Keywords Modal
@@ -1177,18 +1507,95 @@ function setupEventListeners() {
     if (e.target === elModalAlert) elModalAlert.classList.add("hidden");
   });
 
-  // Download Toggles
-  elToggleDownloadAll.addEventListener("click", () => {
-    state.downloadMode = "all";
-    elToggleDownloadAll.classList.add("active");
-    elToggleDownloadSelected.classList.remove("active");
-  });
-  
-  elToggleDownloadSelected.addEventListener("click", () => {
-    state.downloadMode = "selected";
-    elToggleDownloadSelected.classList.add("active");
-    elToggleDownloadAll.classList.remove("active");
-  });
+  // Select All History Checkbox
+  if (elSelectAllHistoryCheckbox) {
+    elSelectAllHistoryCheckbox.addEventListener("change", () => {
+      const isChecked = elSelectAllHistoryCheckbox.checked;
+      document.querySelectorAll(".keyword-select-checkbox").forEach(cb => {
+        cb.checked = isChecked;
+      });
+      document.querySelectorAll(".patent-select-checkbox").forEach(cb => {
+        cb.checked = isChecked;
+        if (isChecked) handlePatentCheckboxChange(cb);
+      });
+    });
+  }
+
+  // Global Delete Click
+  let deletePayload = { searchIds: [], patentIds: [] };
+  if (elBtnGlobalDelete) {
+    elBtnGlobalDelete.addEventListener("click", () => {
+      const { searchIds, patentIds, displayItems } = getSelectedItemsToDelete();
+      if (searchIds.length === 0 && patentIds.length === 0) {
+        alert("Please select at least one keyword search or patent to delete.");
+        return;
+      }
+      deletePayload = { searchIds, patentIds };
+      
+      // Populate modal list
+      if (elDeleteSelectedList) {
+        elDeleteSelectedList.innerHTML = displayItems.map(item => {
+          return `<div style="padding: 6px 10px; background: var(--bg-secondary); border-radius: var(--radius-sm); border: 1px solid var(--border-color); text-overflow: ellipsis; overflow: hidden; white-space: nowrap;">${escapeHtml(item)}</div>`;
+        }).join("");
+      }
+      
+      if (elModalDeleteConfirm) {
+        elModalDeleteConfirm.classList.remove("hidden");
+      }
+    });
+  }
+
+  if (elBtnDeleteCancel) {
+    elBtnDeleteCancel.addEventListener("click", () => {
+      if (elModalDeleteConfirm) {
+        elModalDeleteConfirm.classList.add("hidden");
+      }
+    });
+  }
+
+  if (elModalDeleteConfirm) {
+    elModalDeleteConfirm.addEventListener("click", (e) => {
+      if (e.target === elModalDeleteConfirm) {
+        elModalDeleteConfirm.classList.add("hidden");
+      }
+    });
+  }
+
+  if (elBtnDeleteConfirmAction) {
+    elBtnDeleteConfirmAction.addEventListener("click", async () => {
+      try {
+        const res = await fetch("/api/history/delete", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            search_ids: deletePayload.searchIds,
+            patent_ids: deletePayload.patentIds
+          })
+        });
+        if (!res.ok) {
+          const err = await res.json();
+          throw new Error(err.detail || "Delete request failed");
+        }
+        
+        // Hide modal
+        if (elModalDeleteConfirm) {
+          elModalDeleteConfirm.classList.add("hidden");
+        }
+        
+        // Uncheck select all header
+        if (elSelectAllHistoryCheckbox) {
+          elSelectAllHistoryCheckbox.checked = false;
+        }
+
+        // Reload project history to refresh the list
+        if (state.activeProjectId) {
+          await loadProjectHistory(state.activeProjectId);
+        }
+      } catch (err) {
+        alert(`Failed to delete selected items: ${err.message}`);
+      }
+    });
+  }
 
   elBtnGlobalExportCsv.addEventListener("click", () => handleGlobalExport("csv"));
   elBtnGlobalExportPdf.addEventListener("click", () => handleGlobalExport("pdf"));
@@ -1444,4 +1851,49 @@ async function handleCaptchaSubmit(e) {
     elBtnCaptchaSubmit.innerText = "Verify CAPTCHA";
   }
 }
+
+function updateGlobalSelectAllState() {
+  if (!elSelectAllHistoryCheckbox) return;
+  const allKeywordCbs = document.querySelectorAll(".keyword-select-checkbox");
+  if (allKeywordCbs.length === 0) {
+    elSelectAllHistoryCheckbox.checked = false;
+    return;
+  }
+  const allChecked = Array.from(allKeywordCbs).every(cb => cb.checked);
+  elSelectAllHistoryCheckbox.checked = allChecked;
+}
+
+function getSelectedItemsToDelete() {
+  const searchIds = [];
+  const patentIds = [];
+  const displayItems = [];
+
+  const cards = document.querySelectorAll(".query-card");
+  cards.forEach(card => {
+    const headerCb = card.querySelector(".keyword-select-checkbox");
+    if (!headerCb) return;
+    const searchId = parseInt(headerCb.dataset.searchId, 10);
+    const searchQuery = card.querySelector(".query-text").textContent.trim();
+
+    if (headerCb.checked) {
+      searchIds.push(searchId);
+      // Show just the keyword text
+      displayItems.push(searchQuery);
+    } else {
+      const patentCbs = card.querySelectorAll(".patent-select-checkbox:checked");
+      patentCbs.forEach(cb => {
+        const patentId = parseInt(cb.dataset.patentId, 10);
+        const titleEl = cb.closest(".patent-card").querySelector(".patent-title");
+        const titleText = titleEl ? titleEl.textContent.trim() : "";
+        patentIds.push(patentId);
+        // Show just the patent title (or ID if no title)
+        displayItems.push(titleText || `Patent #${patentId}`);
+      });
+    }
+  });
+
+  return { searchIds, patentIds, displayItems };
+}
+
+
 

@@ -26,6 +26,7 @@ from db import (
     init_db, get_projects, create_project, delete_project,
     create_search, save_patents, get_project_data, get_search_results,
     get_patents_by_ids, get_all_project_patents, update_patent_audit,
+    get_db_connection,
 )
 from scraper import get_india_options_from_env, normalize_india_options, normalize_sources, scrape_patents
 
@@ -56,6 +57,7 @@ init_db()
 # ── In-memory task store (task_id → asyncio.Queue) ───────────────────────────
 _task_queues: dict[str, asyncio.Queue] = {}
 _captcha_futures: dict[str, asyncio.Future] = {}
+_task_cancelled: dict[str, bool] = {}  # tracks if a task was terminate-requested
 
 
 # ── Pydantic schemas ──────────────────────────────────────────────────────────
@@ -69,6 +71,8 @@ class ManualScrapeRequest(BaseModel):
     max_results: int = 20
     sources: list[str] = Field(default_factory=lambda: ["google"])
     india_options: dict = Field(default_factory=dict)
+    captcha_mode: str = "auto"       # "auto" | "manual"
+    captcha_service: str = "2captcha" # "2captcha" (for auto)
 
 class GenerateQueriesRequest(BaseModel):
     requirement: str
@@ -77,11 +81,14 @@ class ConfirmAISearchRequest(BaseModel):
     project_id: int
     requirement: str
     queries: list[str]
-    cpc_codes: list[str]
-    ai_rationale: str
+    cpc_codes: list[str] = []
+    ai_rationale: str = ""
     max_results: int = 20
+    audit_mode: str = "sequential"
     sources: list[str] = Field(default_factory=lambda: ["google"])
     india_options: dict = Field(default_factory=dict)
+    captcha_mode: str = "auto"
+    captcha_service: str = "2captcha"
 
 class AuditRequest(BaseModel):
     requirement: str = ""  # optional override; falls back to stored query
@@ -104,18 +111,37 @@ async def _push(queue: asyncio.Queue, event: dict):
 
 _captcha_attempts: dict[str, int] = {}
 
-async def _auto_solve_captcha_with_gemini(image_data_url: str) -> str:
-    """Uses Gemini vision models to automatically solve a CAPTCHA."""
+async def _auto_solve_captcha_with_gemini(image_data_url: str, queue) -> str:
+    """Uses Gemini vision models to automatically solve a CAPTCHA, falling back to other keys on failure."""
     import base64
     from PIL import Image
+    from google import genai
     try:
-        from ai_agent import gemini_client, GEMINI_MODEL
+        from ai_agent import GEMINI_MODEL
     except Exception as exc:
-        logger.error("[CAPTCHA] Failed to import from ai_agent: %s", exc)
-        return ""
+        logger.error("[CAPTCHA] Failed to import GEMINI_MODEL from ai_agent: %s", exc)
+        GEMINI_MODEL = "gemini-3.5-flash"
 
     if not image_data_url.startswith("data:image/png;base64,"):
         logger.error("[CAPTCHA] Invalid image data URL format")
+        return ""
+
+    # Collect all available API keys starting with GEMINI_API_KEY
+    import os
+    keys = []
+    main_key = os.getenv("GEMINI_API_KEY")
+    if main_key:
+        keys.append(main_key.strip())
+    
+    # Check other numbered/named keys (GEMINI_API_KEY1, GEMINI_API_KEY2, etc.)
+    for k, v in os.environ.items():
+        if k.startswith("GEMINI_API_KEY") and k != "GEMINI_API_KEY":
+            v_clean = v.strip()
+            if v_clean and v_clean not in keys:
+                keys.append(v_clean)
+
+    if not keys:
+        logger.warning("[CAPTCHA] No Gemini API keys found.")
         return ""
 
     try:
@@ -128,78 +154,194 @@ async def _auto_solve_captcha_with_gemini(image_data_url: str) -> str:
             "Identify the alphanumeric characters in this CAPTCHA image. "
             "Output ONLY the exact characters, with no spaces, explanations, or extra text."
         )
-
-        # Run generator in a thread pool since genai client calls are blocking
-        def _call_gemini():
-            response = gemini_client.models.generate_content(
-                model=GEMINI_MODEL,
-                contents=[img, prompt],
-            )
-            return response.text
-
-        loop = asyncio.get_running_loop()
-        response_text = await loop.run_in_executor(None, _call_gemini)
-        
-        answer = response_text.strip() if response_text else ""
-        logger.info("[CAPTCHA] Gemini auto-solve raw response: %s", answer)
-        return answer
     except Exception as exc:
-        logger.error("[CAPTCHA] Gemini auto-solve failed: %s", exc, exc_info=True)
+        logger.error("[CAPTCHA] Failed to decode image: %s", exc)
         return ""
 
+    # Try each key in sequence until one succeeds
+    for i, key in enumerate(keys):
+        msg = f"Attempting Gemini auto-solve (key {i+1}/{len(keys)})..."
+        logger.info("[CAPTCHA] %s", msg)
+        await _push(queue, {
+            "stage": "scraping",
+            "message": msg
+        })
+        try:
+            client = genai.Client(api_key=key)
+            
+            def _call_gemini():
+                response = client.models.generate_content(
+                    model=GEMINI_MODEL,
+                    contents=[img, prompt],
+                )
+                return response.text
 
-async def _request_captcha(task_id: str, image_data_url: str) -> str:
-    """Publish a CAPTCHA challenge and wait for the user's answer (or auto-solve)."""
+            loop = asyncio.get_running_loop()
+            response_text = await loop.run_in_executor(None, _call_gemini)
+            
+            answer = response_text.strip() if response_text else ""
+            if answer:
+                logger.info("[CAPTCHA] Gemini auto-solve succeeded using key %d/%d: %s", i + 1, len(keys), answer)
+                return answer
+        except Exception as exc:
+            logger.warning("[CAPTCHA] Gemini solve failed with key %d/%d: %s", i + 1, len(keys), exc)
+            # Log failure of this key to UI
+            await _push(queue, {
+                "stage": "scraping",
+                "message": f"Gemini key {i+1}/{len(keys)} failed (quota or API error)."
+            })
+            continue
+
+    logger.error("[CAPTCHA] All available Gemini API keys failed or were exhausted.")
+    return ""
+
+
+async def _solve_captcha_with_twocaptcha(image_data_url: str, queue) -> str:
+    """Solves a CAPTCHA using the paid 2Captcha service."""
+    import os
+    import httpx
+
+    api_key = os.getenv("TWO_CAPTCHA_API_KEY")
+    if not api_key:
+        logger.warning("[2CAPTCHA] TWO_CAPTCHA_API_KEY is not configured.")
+        return ""
+
+    if not image_data_url.startswith("data:image/png;base64,"):
+        logger.error("[2CAPTCHA] Invalid image data URL format")
+        return ""
+
+    await _push(queue, {
+        "stage": "scraping",
+        "message": "Attempting paid auto-solve using 2Captcha service...",
+        "captcha_image": image_data_url
+    })
+
+    base64_data = image_data_url.split(",", 1)[1]
+
+    try:
+        async with httpx.AsyncClient() as client:
+            # 1. Submit captcha to 2Captcha
+            logger.info("[2CAPTCHA] Submitting CAPTCHA to 2Captcha...")
+            submit_response = await client.post(
+                "https://2captcha.com/in.php",
+                data={
+                    "key": api_key.strip(),
+                    "method": "base64",
+                    "body": base64_data,
+                    "json": 1,
+                    "regsense": 1,
+                },
+                timeout=10,
+            )
+            submit_data = submit_response.json()
+            if submit_data.get("status") != 1:
+                err_msg = submit_data.get("request", "Unknown error")
+                logger.error("[2CAPTCHA] Submit failed: %s", err_msg)
+                await _push(queue, {
+                    "stage": "scraping",
+                    "message": f"2Captcha submission failed: {err_msg}"
+                })
+                return ""
+
+            captcha_id = submit_data.get("request")
+            logger.info("[2CAPTCHA] CAPTCHA submitted successfully. ID: %s. Polling...", captcha_id)
+
+            # 2. Polling for the result
+            for poll in range(12): # Poll for up to 60 seconds (12 * 5s)
+                await asyncio.sleep(5)
+                res_response = await client.get(
+                    "https://2captcha.com/res.php",
+                    params={
+                        "key": api_key.strip(),
+                        "action": "get",
+                        "id": captcha_id,
+                        "json": 1,
+                    },
+                    timeout=10,
+                )
+                res_data = res_response.json()
+                status = res_data.get("status")
+                request_val = res_data.get("request")
+
+                if status == 1:
+                    logger.info("[2CAPTCHA] Solved successfully: %s", request_val)
+                    await _push(queue, {
+                        "stage": "scraping",
+                        "message": f"2Captcha solved CAPTCHA code: {request_val}. Submitting..."
+                    })
+                    return request_val
+                elif request_val == "CAPCHA_NOT_READY":
+                    logger.info("[2CAPTCHA] CAPTCHA not ready yet, polling...")
+                    await _push(queue, {
+                        "stage": "scraping",
+                        "message": "2Captcha is solving the CAPTCHA (processing)..."
+                    })
+                    continue
+                else:
+                    logger.error("[2CAPTCHA] Polling failed: %s", request_val)
+                    await _push(queue, {
+                        "stage": "scraping",
+                        "message": f"2Captcha solving failed: {request_val}"
+                    })
+                    return ""
+
+    except Exception as exc:
+        logger.error("[2CAPTCHA] Failed to solve CAPTCHA: %s", exc, exc_info=True)
+        await _push(queue, {
+            "stage": "scraping",
+            "message": f"2Captcha exception occurred: {str(exc)}"
+        })
+        return ""
+    
+    return ""
+
+
+async def _request_captcha(task_id: str, image_data_url: str, captcha_mode: str = "auto", captcha_service: str = "2captcha") -> str:
+    """Publish a CAPTCHA challenge and wait for the answer.
+    
+    - auto mode:   Try the paid service (2Captcha) up to MAX_CAPTCHA_ATTEMPTS times.
+                   Never ask for manual input. Return empty string on total failure.
+    - manual mode: Show the CAPTCHA modal to the user every attempt, up to MAX_CAPTCHA_ATTEMPTS times.
+                   Never try any paid service.
+    """
+    MAX_CAPTCHA_ATTEMPTS = 5
     queue = _task_queues.get(task_id)
     if not queue:
         logger.error("[CAPTCHA] Queue not found for task %s", task_id)
         return ""
 
-    # Increment and track CAPTCHA attempts for this task
     attempt = _captcha_attempts.get(task_id, 0) + 1
     _captcha_attempts[task_id] = attempt
 
-    # If first attempt and GEMINI_API_KEY is available, try auto-solving
-    import os
-    api_key = os.getenv("GEMINI_API_KEY")
-    if attempt == 1:
-        if api_key:
-            await _push(queue, {
-                "stage": "scraping",
-                "message": "Attempting to automatically solve CAPTCHA using Gemini..."
-            })
-            answer = await _auto_solve_captcha_with_gemini(image_data_url)
-            if answer:
-                await _push(queue, {
-                    "stage": "scraping",
-                    "message": f"Gemini predicted CAPTCHA code: {answer}. Submitting..."
-                })
-                return answer
-            else:
-                await _push(queue, {
-                    "stage": "scraping",
-                    "message": "Gemini could not solve the CAPTCHA. Falling back to manual input..."
-                })
-        else:
-            logger.warning("[CAPTCHA] GEMINI_API_KEY environment variable is not set. Skipping auto-solve.")
-            await _push(queue, {
-                "stage": "scraping",
-                "message": "GEMINI_API_KEY not configured. Falling back to manual input..."
-            })
+    if attempt > MAX_CAPTCHA_ATTEMPTS:
+        await _push(queue, {"stage": "scraping", "message": f"CAPTCHA failed after {MAX_CAPTCHA_ATTEMPTS} attempts. Skipping."})
+        return ""
 
-    # Manual fallback flow
-    loop = asyncio.get_running_loop()
-    future = loop.create_future()
-    _captcha_futures[task_id] = future
-    await _push(queue, {
-        "stage": "captcha",
-        "message": "Indian Patent Search needs CAPTCHA. Enter the code shown to continue.",
-        "captcha_image": image_data_url,
-    })
-    try:
-        return await asyncio.wait_for(future, timeout=180)
-    finally:
-        _captcha_futures.pop(task_id, None)
+    if captcha_mode == "auto":
+        # Auto mode: try the configured paid service, never prompt user
+        await _push(queue, {"stage": "scraping", "message": f"[Auto CAPTCHA] Attempt {attempt}/{MAX_CAPTCHA_ATTEMPTS} using {captcha_service}..."})
+        answer = ""
+        if captcha_service == "2captcha":
+            answer = await _solve_captcha_with_twocaptcha(image_data_url, queue)
+        if answer:
+            return answer
+        await _push(queue, {"stage": "scraping", "message": f"[Auto CAPTCHA] Attempt {attempt} failed. Will retry automatically on next CAPTCHA prompt."})
+        return ""
+    else:
+        # Manual mode: always show the modal to the user
+        await _push(queue, {"stage": "scraping", "message": f"[Manual CAPTCHA] Attempt {attempt}/{MAX_CAPTCHA_ATTEMPTS} — waiting for user input..."})
+        loop = asyncio.get_running_loop()
+        future = loop.create_future()
+        _captcha_futures[task_id] = future
+        await _push(queue, {
+            "stage": "captcha",
+            "message": f"Indian Patent CAPTCHA required (attempt {attempt}/{MAX_CAPTCHA_ATTEMPTS}). Enter the code shown to continue.",
+            "captcha_image": image_data_url,
+        })
+        try:
+            return await asyncio.wait_for(future, timeout=300)
+        finally:
+            _captcha_futures.pop(task_id, None)
 
 
 # ── SSE generator with keep-alive pings ──────────────────────────────────────
@@ -226,6 +368,7 @@ async def _sse_generator(task_id: str) -> AsyncGenerator[str, None]:
 
     _task_queues.pop(task_id, None)
     _captcha_attempts.pop(task_id, None)
+    _task_cancelled.pop(task_id, None)
     logger.info("[SSE] Stream closed for task_id=%s", task_id)
 
 
@@ -241,6 +384,8 @@ async def _ai_pipeline(
     sources: list[str],
     india_options: dict,
     task_id: str,
+    captcha_mode: str = "auto",
+    captcha_service: str = "2captcha",
 ):
     """Scrapes patents for all queries and saves ALL results to the DB immediately.
     Relevance auditing is a separate on-demand step triggered by the user."""
@@ -275,7 +420,7 @@ async def _ai_pipeline(
                     progress_callback=_progress_sync,
                     sources=sources,
                     india_options=india_options,
-                    captcha_callback=lambda image, tid=task_id: _request_captcha(tid, image),
+                    captcha_callback=lambda image, tid=task_id, cm=captcha_mode, cs=captcha_service: _request_captcha(tid, image, cm, cs),
                 )
                 all_raw.extend(results)
                 await _push(queue, {
@@ -342,8 +487,11 @@ async def _manual_pipeline(
     sources: list[str],
     india_options: dict,
     task_id: str,
+    captcha_mode: str = "auto",
+    captcha_service: str = "2captcha",
 ):
     queue = _task_queues[task_id]
+    _task_cancelled[task_id] = False
     try:
         await _push(queue, {
             "stage": "scraping",
@@ -354,11 +502,26 @@ async def _manual_pipeline(
         })
 
         scraped_runs = []
+        failed_keywords = []
+        remaining_keywords = []
+
         for idx, kw in enumerate(keywords, 1):
+            # Check if user requested termination
+            if _task_cancelled.get(task_id):
+                remaining_keywords = keywords[idx - 1:]  # include current unstarted
+                await _push(queue, {
+                    "stage": "scraping",
+                    "message": f"⛔ Scrape terminated by user. {len(remaining_keywords)} keywords remaining.",
+                })
+                break
+
             await _push(queue, {
                 "stage": "scraping",
                 "message": f"Searching keyword {idx}/{len(keywords)}: {kw[:80]}",
             })
+
+            # Reset per-keyword CAPTCHA attempt counter
+            _captcha_attempts[task_id] = 0
 
             def _progress_sync(msg: str):
                 asyncio.get_event_loop().call_soon_threadsafe(
@@ -374,7 +537,7 @@ async def _manual_pipeline(
                     progress_callback=_progress_sync,
                     sources=sources,
                     india_options=india_options,
-                    captcha_callback=lambda image, tid=task_id: _request_captcha(tid, image),
+                    captcha_callback=lambda image, tid=task_id, cm=captcha_mode, cs=captcha_service: _request_captcha(tid, image, cm, cs),
                 )
                 if patents:
                     source_label = ", ".join(sorted({p.get("source", "Google Patents") for p in patents}))
@@ -383,24 +546,39 @@ async def _manual_pipeline(
                     scraped_runs.append({"keyword": kw, "count": len(patents), "search_id": search_id})
                     await _push(queue, {
                         "stage": "saving",
-                        "message": f"Saved {len(patents)} patents for keyword: {kw[:80]}",
+                        "message": f"✅ Saved {len(patents)} patents for keyword: {kw[:80]}",
                     })
                 else:
+                    failed_keywords.append(kw)
                     scraped_runs.append({"keyword": kw, "count": 0, "error": "No results found"})
+                    await _push(queue, {
+                        "stage": "scraping",
+                        "message": f"⚠️ No results found for: {kw[:80]}",
+                    })
             except Exception as exc:
                 logger.error("[Manual] Scrape failed for '%s': %s", kw, exc, exc_info=True)
+                failed_keywords.append(kw)
                 scraped_runs.append({"keyword": kw, "count": 0, "error": str(exc)})
                 await _push(queue, {
                     "stage": "scraping",
-                    "message": f"Keyword failed: {kw[:60]} — {str(exc)[:120]}",
+                    "message": f"❌ Keyword failed: {kw[:60]} — {str(exc)[:120]}",
                 })
+
+        if failed_keywords:
+            create_search(project_id, ",".join(failed_keywords), search_mode="failed")
+        if remaining_keywords:
+            create_search(project_id, ",".join(remaining_keywords), search_mode="failed")
 
         await _push(queue, {
             "stage": "complete",
             "message": "Manual scrape complete.",
             "scraped": scraped_runs,
+            "failed_keywords": failed_keywords,
+            "remaining_keywords": remaining_keywords,
+            "terminated": _task_cancelled.get(task_id, False),
             "data": get_project_data(project_id),
         })
+
     except Exception as exc:
         logger.error("[Manual] Pipeline crashed task_id=%s: %s", task_id, exc, exc_info=True)
         await _push(queue, {"stage": "error", "message": f"Manual scrape crashed: {str(exc)}"})
@@ -561,6 +739,8 @@ async def trigger_manual_scrape(req: ManualScrapeRequest, background_tasks: Back
         sources=sources,
         india_options=india_options,
         task_id=task_id,
+        captcha_mode=req.captcha_mode,
+        captcha_service=req.captcha_service,
     )
     return {"status": "processing", "task_id": task_id}
 
@@ -618,6 +798,8 @@ async def confirm_ai_search(req: ConfirmAISearchRequest, background_tasks: Backg
         sources=sources,
         india_options=india_options,
         task_id=task_id,
+        captcha_mode=req.captcha_mode,
+        captcha_service=req.captcha_service,
     )
     return {"status": "processing", "task_id": task_id}
 
@@ -632,6 +814,16 @@ async def submit_captcha(task_id: str, req: CaptchaAnswerRequest):
         raise HTTPException(status_code=400, detail="CAPTCHA answer cannot be empty")
     future.set_result(answer)
     return {"status": "accepted"}
+
+
+@app.post("/api/scrape/cancel/{task_id}")
+async def cancel_scrape(task_id: str):
+    """Signal the manual pipeline to stop after the current keyword finishes."""
+    if task_id not in _task_queues:
+        raise HTTPException(status_code=404, detail="Task not found or already finished")
+    _task_cancelled[task_id] = True
+    logger.info("[API] Cancellation requested for task_id=%s", task_id)
+    return {"status": "cancelling"}
 
 
 @app.post("/api/ai/audit/{search_id}")
@@ -686,6 +878,31 @@ def _enrich_relevancy(patents: list[dict]) -> list[dict]:
     for p in patents:
         p["relevancy"] = score_to_relevancy(p.get("confidence_score"))
     return patents
+
+
+class DeleteHistoryRequest(BaseModel):
+    search_ids: list[int] = []
+    patent_ids: list[int] = []
+
+@app.post("/api/history/delete")
+def delete_history(req: DeleteHistoryRequest):
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        # Delete individual patents if any
+        if req.patent_ids:
+            placeholders = ",".join("?" for _ in req.patent_ids)
+            cursor.execute(f"DELETE FROM patents WHERE id IN ({placeholders});", req.patent_ids)
+        # Delete search runs if any (ON DELETE CASCADE will automatically delete their patents)
+        if req.search_ids:
+            placeholders = ",".join("?" for _ in req.search_ids)
+            cursor.execute(f"DELETE FROM searches WHERE id IN ({placeholders});", req.search_ids)
+        conn.commit()
+        conn.close()
+        return {"status": "success", "message": "Selected items deleted successfully."}
+    except Exception as e:
+        logger.error("[API] Failed to delete history: %s", e)
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 # ── Export Endpoints ──────────────────────────────────────────────────────────

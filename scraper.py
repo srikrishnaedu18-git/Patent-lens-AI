@@ -423,7 +423,7 @@ async def scrape_india_patents(
         else:
             await page.click("input[type='submit'][value='Search']")
 
-        await page.wait_for_selector("#tableData tbody tr", timeout=45_000)
+        await page.wait_for_selector("text=Total Document(s):", timeout=45_000)
 
         ip_value = ""
         try:
@@ -485,33 +485,98 @@ async def _apply_india_search_options(page, query: str, options: dict) -> None:
         await page.select_option(f"select[name='LogicField{idx}']", row["logic"])
 
 
+async def _wait_for_captcha_loaded(page) -> None:
+    """Force refresh the captcha image and wait for it to be fully loaded with a timestamp."""
+    captcha_loc = page.locator("#Captcha")
+    await captcha_loc.wait_for(state="visible", timeout=15000)
+    
+    refresh_loc = page.locator("img[onclick='CaptchaLoad()']")
+    await refresh_loc.wait_for(state="visible", timeout=15000)
+    
+    # Hide any datepicker/calendar overlays that might block clicking the refresh button
+    await page.evaluate("""
+        document.querySelectorAll(".datepicker-dropdown, .datepicker, #ui-datepicker-div").forEach(el => el.style.display = "none");
+    """)
+    
+    # Click refresh to load a fresh captcha with a unique timestamp (bypassing browser cache)
+    await refresh_loc.click(force=True)
+    
+    # Wait for the image src to contain "?" and be fully loaded
+    js_code = """
+        async () => {
+            const img = document.getElementById("Captcha");
+            if (!img) return;
+            
+            // Wait for src to contain "?"
+            let attempts = 0;
+            while (!img.getAttribute("src").includes("?") && attempts < 100) {
+                await new Promise(r => setTimeout(r, 50));
+                attempts++;
+            }
+            
+            // Wait for image loading to complete
+            attempts = 0;
+            while ((!img.complete || img.naturalWidth === 0) && attempts < 100) {
+                await new Promise(r => setTimeout(r, 50));
+                attempts++;
+            }
+        }
+    """
+    await page.evaluate(js_code)
+
+
 async def _solve_india_captcha(
     page,
     captcha_callback: Callable[[str], Awaitable[str]],
     log_callback: Callable[[str], None],
 ) -> None:
     """Send CAPTCHA image to the app, wait for the answer, and submit."""
-    for attempt in range(1, 4):
+    for attempt in range(1, 6):
+        # 1. Force refresh and wait for captcha image to be fully loaded
+        await _wait_for_captcha_loaded(page)
+        
+        # 2. Hide any datepicker/calendar overlays that might obscure the CAPTCHA image
+        await page.evaluate("""
+            document.querySelectorAll(".datepicker-dropdown, .datepicker, #ui-datepicker-div").forEach(el => el.style.display = "none");
+        """)
+        
         captcha = page.locator("#Captcha")
         image_bytes = await captcha.screenshot(type="png")
         image_data_url = "data:image/png;base64," + base64.b64encode(image_bytes).decode("ascii")
-        log_callback(f"Indian Patent Search CAPTCHA required (attempt {attempt}/3).")
+        log_callback(f"Indian Patent Search CAPTCHA required (attempt {attempt}/5).")
+        
         answer = (await captcha_callback(image_data_url)).strip()
         if not answer:
             raise RuntimeError("Indian Patent Search CAPTCHA was not provided.")
 
         await page.fill("#CaptchaText", answer)
         await page.click("input[type='submit'][value='Search']")
+        
+        # Wait for the postback navigation to complete (up to 30 seconds for slow governmental servers)
         try:
-            await page.wait_for_selector("#tableData tbody tr", timeout=10_000)
+            await page.wait_for_load_state("load", timeout=30_000)
+        except Exception:
+            pass
+            
+        # Check if the search results have loaded
+        if await page.locator("text=Total Document(s):").count() > 0:
+            return
+            
+        # Check if we are still on the CAPTCHA page (meaning CAPTCHA was incorrect)
+        if await page.locator("#Captcha").count() > 0:
+            if attempt >= 5:
+                raise RuntimeError("Indian Patent Search CAPTCHA failed after 5 attempts.")
+            log_callback("CAPTCHA was not accepted. Refreshing and asking again.")
+            continue
+            
+        # Fallback: wait a bit more for the results to load
+        try:
+            await page.wait_for_selector("text=Total Document(s):", timeout=15_000)
             return
         except PlaywrightTimeoutError:
-            if attempt >= 3:
-                raise RuntimeError("Indian Patent Search CAPTCHA failed after 3 attempts.")
+            if attempt >= 5:
+                raise RuntimeError("Indian Patent Search CAPTCHA failed after 5 attempts.")
             log_callback("CAPTCHA was not accepted. Refreshing and asking again.")
-            if await page.locator("img[onclick='CaptchaLoad()']").count():
-                await page.locator("img[onclick='CaptchaLoad()']").click()
-                await page.wait_for_timeout(1000)
 
 
 async def _extract_india_result_rows(page, max_results: int) -> list[dict]:

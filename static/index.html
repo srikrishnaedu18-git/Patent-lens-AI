@@ -187,12 +187,18 @@
                 <span class="pulse-dot"></span>
                 Live Pipeline Log
               </div>
-              <div class="stage-pills" id="stage-pills">
-                <span class="stage-pill" id="pill-planning">Planning</span>
-                <span class="stage-pill" id="pill-scraping">Scraping</span>
-                <span class="stage-pill" id="pill-auditing">Auditing</span>
-                <span class="stage-pill" id="pill-saving">Saving</span>
-                <span class="stage-pill" id="pill-complete">Done</span>
+              <div class="live-feed-header-right">
+                <div class="stage-pills" id="stage-pills">
+                  <span class="stage-pill" id="pill-planning">Planning</span>
+                  <span class="stage-pill" id="pill-scraping">Scraping</span>
+                  <span class="stage-pill" id="pill-auditing">Auditing</span>
+                  <span class="stage-pill" id="pill-saving">Saving</span>
+                  <span class="stage-pill" id="pill-complete">Done</span>
+                </div>
+                <button type="button" id="btn-terminate-scrape" class="btn-terminate hidden" title="Stop scrape after current keyword">
+                  <svg class="icon-sm" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/></svg>
+                  Stop
+                </button>
               </div>
             </div>
             <div id="live-log" class="live-log-box">
@@ -212,12 +218,11 @@
           <!-- Results section -->
           <section class="results-section">
             <div class="section-header">
-              <h2>Scraped History</h2>
+              <div class="scraped-history-header-left">
+                <input type="checkbox" id="select-all-history-checkbox" class="history-select-all-cb" title="Select All">
+                <h2>Scraped History</h2>
+              </div>
               <div class="global-export-panel">
-                <div class="toggle-segment-control">
-                  <button type="button" id="toggle-download-all" class="toggle-btn active" data-mode="all">Download All</button>
-                  <button type="button" id="toggle-download-selected" class="toggle-btn" data-mode="selected">Download Selected</button>
-                </div>
                 <div class="global-export-actions">
                   <!-- Filter button -->
                   <button type="button" id="btn-relevancy-filter" class="btn-icon btn-filter" aria-label="Filter by relevancy" title="Filter by Relevancy">
@@ -225,13 +230,20 @@
                       <polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/>
                     </svg>
                   </button>
-                  <button type="button" id="btn-global-export-csv" class="btn-secondary btn-export-global">
+                  <button type="button" id="btn-global-export-csv" class="btn-secondary btn-export-global" title="Export Selected to CSV">
                     <svg class="icon-sm" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3"/></svg>
                     CSV
                   </button>
-                  <button type="button" id="btn-global-export-pdf" class="btn-secondary btn-export-global">
+                  <button type="button" id="btn-global-export-pdf" class="btn-secondary btn-export-global" title="Export Selected to PDF">
                     <svg class="icon-sm" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3"/></svg>
                     PDF
+                  </button>
+                  <button type="button" id="btn-global-delete" class="btn-secondary btn-delete-global" title="Delete Selected Scraped Runs/Patents">
+                    <svg class="icon-sm" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                      <polyline points="3 6 5 6 21 6"></polyline>
+                      <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
+                    </svg>
+                    Delete
                   </button>
                 </div>
               </div>
@@ -320,6 +332,25 @@
             </label>
           </div>
         </div>
+        <div class="settings-group">
+          <div class="settings-label">
+            <span>CAPTCHA Mode</span>
+            <span class="meta-text">How the scraper handles Indian Patent CAPTCHAs</span>
+          </div>
+          <div class="captcha-mode-toggle">
+            <button type="button" id="btn-captcha-mode-auto" class="captcha-mode-btn active" data-mode="auto">Auto Solve</button>
+            <button type="button" id="btn-captcha-mode-manual" class="captcha-mode-btn" data-mode="manual">Manual Only</button>
+          </div>
+          <div id="captcha-service-section" class="settings-option-cards" style="margin-top: 10px;">
+            <label class="option-card" id="opt-captcha-2captcha">
+              <input type="radio" name="captcha-service" value="2captcha" checked>
+              <div class="option-card-body">
+                <div class="option-card-title">2Captcha</div>
+                <div class="option-card-desc">Paid automated CAPTCHA solving via 2Captcha API. Retries up to 5 times automatically.</div>
+              </div>
+            </label>
+          </div>
+        </div>
       </div>
     </div>
   </div>
@@ -401,6 +432,30 @@
       </div>
       <div class="alert-footer">
         <button type="button" id="btn-alert-ok" class="btn-primary">Got it</button>
+      </div>
+    </div>
+  </div>
+  <!-- Delete Confirmation Modal -->
+  <div id="modal-delete-confirm" class="modal-overlay hidden">
+    <div class="modal modal-alert">
+      <div class="modal-header">
+        <h3 style="color: var(--danger); display: flex; align-items: center; gap: 8px;">
+          <svg class="icon-sm" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <polyline points="3 6 5 6 21 6"></polyline>
+            <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
+          </svg>
+          Confirm Deletion
+        </h3>
+      </div>
+      <div class="alert-body">
+        <p>Do you want to delete the following selected items?</p>
+        <div id="delete-selected-list" style="margin-top: 12px; max-height: 150px; overflow-y: auto; border: 1px solid var(--border-color); padding: 8px; border-radius: var(--radius-md); background: var(--bg-primary); text-align: left; font-size: var(--font-sm); display: flex; flex-direction: column; gap: 6px;">
+          <!-- Dynamic list of items to delete -->
+        </div>
+      </div>
+      <div class="alert-footer" style="display: flex; justify-content: flex-end; gap: 8px; margin-top: 15px;">
+        <button type="button" id="btn-delete-cancel" class="btn-secondary">Cancel</button>
+        <button type="button" id="btn-delete-confirm-action" class="btn-primary" style="background-color: var(--danger); border-color: var(--danger);">Delete</button>
       </div>
     </div>
   </div>

@@ -534,12 +534,64 @@ select:focus {
   align-items: center;
   justify-content: space-between;
 }
-/* Global Export Panel & Toggle Segments */
+
+.scraped-history-header-left {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+/* Direct inline checkbox to the left of Scraped History h2 */
+.history-select-all-cb {
+  width: 18px !important;
+  height: 18px !important;
+  flex-shrink: 0;
+  cursor: pointer;
+  accent-color: var(--accent);
+  margin: 0;
+}
+
+/* Global Export Panel */
 .global-export-panel {
   display: flex;
   align-items: center;
   gap: 16px;
 }
+
+/* CAPTCHA mode toggle in settings */
+.captcha-mode-toggle {
+  display: flex;
+  background-color: var(--bg-primary);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  padding: 3px;
+  gap: 2px;
+  width: fit-content;
+}
+
+.captcha-mode-btn {
+  background: transparent;
+  border: none;
+  color: var(--text-secondary);
+  font-size: 0.78rem;
+  font-weight: 700;
+  padding: 6px 16px;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: all var(--transition-fast);
+  text-transform: none;
+}
+
+.captcha-mode-btn:hover {
+  color: var(--text-primary);
+}
+
+.captcha-mode-btn.active {
+  background-color: var(--accent);
+  color: #fff;
+  box-shadow: var(--shadow-sm);
+}
+
 
 .toggle-segment-control {
   display: flex;
@@ -587,6 +639,28 @@ select:focus {
   border-radius: var(--radius-md);
   cursor: pointer;
 }
+
+.btn-delete-global {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 16px;
+  font-size: 0.8rem;
+  font-weight: 700;
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  background: transparent;
+  border: 1px solid var(--danger);
+  color: var(--danger);
+  transition: all var(--transition-fast);
+}
+
+.btn-delete-global:hover {
+  background: var(--danger-bg);
+  color: var(--danger-hover);
+  border-color: var(--danger-hover);
+}
+
 
 .icon-sm {
   width: 14px;
@@ -1153,11 +1227,17 @@ textarea#requirement-input:focus {
   transition: all var(--transition-fast);
 }
 
+.stage-pill.waiting {
+  color: #f59e0b;
+  border-color: #f59e0b;
+  background-color: rgba(245, 158, 11, 0.08);
+}
+
 .stage-pill.active {
-  color: var(--accent);
-  border-color: var(--accent);
-  background-color: var(--accent-bg);
-  box-shadow: var(--border-glow);
+  color: var(--success);
+  border-color: var(--success);
+  background-color: rgba(16, 185, 129, 0.08);
+  box-shadow: 0 0 8px rgba(16, 185, 129, 0.25);
 }
 
 .stage-pill.done {
@@ -1166,11 +1246,46 @@ textarea#requirement-input:focus {
   background-color: rgba(16, 185, 129, 0.08);
 }
 
+.stage-pill.skipped {
+  color: var(--text-muted);
+  border-color: var(--border-color);
+  background-color: var(--bg-primary);
+  opacity: 0.6;
+}
+
 .stage-pill.error {
   color: var(--danger);
   border-color: var(--danger);
   background-color: var(--danger-bg);
 }
+
+.live-feed-header-right {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+.btn-terminate {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background-color: rgba(239, 68, 68, 0.08);
+  border: 1px solid var(--danger);
+  color: var(--danger);
+  padding: 5px 12px;
+  border-radius: 16px;
+  font-size: 0.75rem;
+  font-weight: 700;
+  cursor: pointer;
+  transition: all var(--transition-fast);
+  text-transform: uppercase;
+}
+
+.btn-terminate:hover {
+  background-color: var(--danger);
+  color: #fff;
+}
+
 
 .live-log-box {
   background-color: var(--bg-primary);
@@ -1372,6 +1487,13 @@ textarea#requirement-input:focus {
 .ai-tag {
   background: linear-gradient(135deg, var(--accent), #7928ca);
 }
+
+.failed-tag {
+  background: rgba(245, 158, 11, 0.15) !important;
+  color: #f59e0b !important;
+  border: 1px solid #f59e0b;
+}
+
 
 /* Patent Card changes: Confidence badge & AI reasoning display */
 .patent-title-line {
@@ -1659,7 +1781,7 @@ textarea#requirement-input:focus {
 }
 
 .alert-body {
-  padding: 10px 0;
+  padding: 12px 24px;
   font-size: 0.88rem;
   color: var(--text-secondary);
   line-height: 1.5;
@@ -1669,6 +1791,7 @@ textarea#requirement-input:focus {
   display: flex;
   justify-content: flex-end;
   margin-top: 16px;
+  padding: 0 24px 20px 24px;
 }
 
 /* India Patents Options Modal */
