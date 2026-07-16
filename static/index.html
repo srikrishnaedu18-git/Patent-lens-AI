@@ -105,15 +105,44 @@
 
             <!-- Manual keyword panel -->
             <div id="panel-manual" class="search-panel">
-              <p class="subtitle">Enter keywords separated by commas. Each keyword runs an independent scrape.</p>
-              <form id="scrape-form-manual" class="scrape-form">
-                <div class="form-group flex-grow">
-                  <label for="keywords-input">Keywords</label>
-                  <input type="text" id="keywords-input" placeholder="e.g. smart irrigation, IoT soil sensor, crop water management" autocomplete="off">
+              <div class="source-toggle-bar" style="margin-bottom: 20px;">
+                <div class="source-toggle-group" role="group" aria-label="Search source">
+                  <button type="button" id="btn-source-google" class="source-toggle-btn active" data-source="google">Google Patents</button>
+                  <button type="button" id="btn-source-india" class="source-toggle-btn" data-source="india">Indian Patents</button>
                 </div>
+              </div>
+              <form id="scrape-form-manual" class="scrape-form">
+                <!-- Google Patents Fields -->
+                <div id="group-keywords-google" class="source-fields-group">
+                  <p class="subtitle" style="margin-bottom: 12px;">Enter keywords separated by commas. Each keyword runs an independent scrape.</p>
+                  <div class="form-group flex-grow">
+                    <label for="keywords-input">Keywords</label>
+                    <input type="text" id="keywords-input" placeholder="e.g. smart irrigation, IoT soil sensor, crop water management" autocomplete="off">
+                  </div>
+                </div>
+
+                <!-- Indian Patents Fields -->
+                <div id="group-keywords-india" class="source-fields-group hidden">
+                  <p class="subtitle" style="margin-bottom: 12px;">Build search query fields to scrape patents from the Indian Patents database.</p>
+                  <div class="dynamic-rows-header" style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
+                    <span class="field-label" style="font-weight: 600; font-size: 0.9rem;">Search Query Fields (Max 5)</span>
+                    <div style="display: flex; gap: 8px;">
+                      <button type="button" id="btn-manual-india-add-row" class="btn-secondary btn-sm" style="padding: 6px 12px; font-size: 0.8rem; display: flex; align-items: center; gap: 4px;">
+                        <svg class="icon-sm" viewBox="0 0 24 24" fill="none" style="width:14px; height:14px;"><path d="M12 5V19M5 12H19" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg> Add Row
+                      </button>
+                      <button type="button" id="btn-manual-india-remove-row" class="btn-secondary btn-sm" style="padding: 6px 12px; font-size: 0.8rem; display: flex; align-items: center; gap: 4px; color: var(--danger); border-color: var(--danger);">
+                        <svg class="icon-sm" viewBox="0 0 24 24" fill="none" style="width:14px; height:14px;"><path d="M19 7L5 7M10 11V17M14 11V17" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg> Remove Row
+                      </button>
+                    </div>
+                  </div>
+                  <div id="manual-india-query-rows-container" class="india-query-rows-list" style="display: flex; flex-direction: column; gap: 12px; max-height: 250px; overflow-y: auto; padding-right: 4px; margin-bottom: 12px;">
+                    <!-- Dynamically populated rows -->
+                  </div>
+                </div>
+
                 <div class="form-row">
                   <div class="form-group limit-group">
-                    <label for="limit-input-manual">Max Results / Keyword</label>
+                    <label for="limit-input-manual">Max Results</label>
                     <input type="number" id="limit-input-manual" min="1" max="50" value="20">
                   </div>
                   <button type="submit" id="btn-manual-scrape" class="btn-primary btn-submit">
@@ -513,19 +542,6 @@
               <label for="india-opt-to-date">To Date</label>
               <input type="text" id="india-opt-to-date" placeholder="dd/mm/yyyy">
             </div>
-          </div>
-
-          <hr class="modal-divider">
-
-          <!-- Dynamic query rows -->
-          <div class="dynamic-rows-header">
-            <span class="field-label">Search Query Fields (Max 5)</span>
-            <button type="button" id="btn-india-add-row" class="btn-secondary btn-sm">
-              <svg class="icon-sm" viewBox="0 0 24 24" fill="none"><path d="M12 5V19M5 12H19" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg> Add Row
-            </button>
-          </div>
-          <div id="india-query-rows-container" class="india-query-rows-list">
-            <!-- Dynamically populated rows -->
           </div>
 
           <div class="modal-footer">

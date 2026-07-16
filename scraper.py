@@ -216,6 +216,35 @@ async def scrape_patents(
     return unique[: max(1, max_results * len(selected_sources))]
 
 
+def _fetch_google_patent_details(patent_id: str) -> tuple[Optional[str], Optional[str]]:
+    """Fetch the full title and abstract for a patent from Google Patents using urllib."""
+    import urllib.request
+    import html
+    import re
+    
+    url = f"https://patents.google.com/patent/{patent_id}/en"
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+    }
+    req = urllib.request.Request(url, headers=headers)
+    try:
+        with urllib.request.urlopen(req, timeout=5) as response:
+            page_content = response.read().decode('utf-8', errors='ignore')
+            
+            # Find DC.title meta tag
+            title_match = re.search(r'<meta[^>]*name="DC\.title"[^>]*content="([^"]*)"', page_content, re.IGNORECASE)
+            title = html.unescape(title_match.group(1).strip()) if title_match else None
+            
+            # Find DC.description meta tag (the abstract)
+            desc_match = re.search(r'<meta[^>]*name="DC\.description"[^>]*content="([^"]*)"', page_content, re.IGNORECASE)
+            abstract = html.unescape(desc_match.group(1).strip()) if desc_match else None
+            
+            return title, abstract
+    except Exception as e:
+        logger.warning("[Scraper] Failed to fetch full details for %s: %s", patent_id, e)
+        return None, None
+
+
 async def scrape_google_patents(
     query: str,
     max_results: int = 20,
@@ -364,6 +393,19 @@ async def scrape_google_patents(
 
         await browser.close()
 
+        # Enrich with full title and abstract in parallel
+        if results:
+            _log(f"🔗 Enriching {len(results)} search results with full titles & abstracts...")
+            async def enrich_result(res):
+                pid = res.get("patent_id")
+                if pid:
+                    t, a = await asyncio.to_thread(_fetch_google_patent_details, pid)
+                    if t:
+                        res["title"] = t
+                    if a:
+                        res["abstract"] = a
+            await asyncio.gather(*(enrich_result(res) for res in results))
+
     return results
 
 
@@ -408,6 +450,16 @@ async def scrape_india_patents(
         )
         page = await context.new_page()
 
+        # Capture alert dialogs (e.g. "No Record Found", "Enter Correct Captcha")
+        dialog_messages = []
+        async def handle_dialog(dialog):
+            msg = dialog.message
+            dialog_messages.append(msg)
+            logger.info("[IP India Dialog] Message: %s", msg)
+            await dialog.dismiss()
+
+        page.on("dialog", lambda d: asyncio.create_task(handle_dialog(d)))
+
         _log(f"Navigating to Indian Patent Search: {url}")
         await page.goto(url, wait_until="domcontentloaded", timeout=45_000)
         await page.wait_for_selector("select[name='ItemField1']", timeout=20_000)
@@ -415,13 +467,27 @@ async def scrape_india_patents(
         await _apply_india_search_options(page, query, options)
 
         captcha_visible = await page.locator("#CaptchaText").count() > 0
+        search_succeeded = True
         if captcha_visible:
             if not captcha_callback:
                 await browser.close()
                 raise RuntimeError("Indian Patent Search requires CAPTCHA, but no CAPTCHA handler is configured.")
-            await _solve_india_captcha(page, captcha_callback, _log)
+            search_succeeded = await _solve_india_captcha(page, captcha_callback, _log, dialog_messages)
         else:
+            dialog_messages.clear()
             await page.click("input[type='submit'][value='Search']")
+            await asyncio.sleep(0.8)
+            if dialog_messages:
+                last_msg = dialog_messages[-1].lower()
+                if "no record" in last_msg or "record not found" in last_msg:
+                    _log("ℹ️ Indian Patents Search returned: No Record Found.")
+                    search_succeeded = False
+                else:
+                    raise RuntimeError(f"Indian Patents portal error: {dialog_messages[-1]}")
+
+        if not search_succeeded:
+            await browser.close()
+            return []
 
         await page.wait_for_selector("text=Total Document(s):", timeout=45_000)
 
@@ -529,8 +595,12 @@ async def _solve_india_captcha(
     page,
     captcha_callback: Callable[[str], Awaitable[str]],
     log_callback: Callable[[str], None],
-) -> None:
-    """Send CAPTCHA image to the app, wait for the answer, and submit."""
+    dialog_messages: list[str],
+) -> bool:
+    """
+    Send CAPTCHA image to the app, wait for the answer, and submit.
+    Returns True if search succeeded, False if no records found.
+    """
     for attempt in range(1, 6):
         # 1. Force refresh and wait for captcha image to be fully loaded
         await _wait_for_captcha_loaded(page)
@@ -550,17 +620,38 @@ async def _solve_india_captcha(
             raise RuntimeError("Indian Patent Search CAPTCHA was not provided.")
 
         await page.fill("#CaptchaText", answer)
+        
+        # Clear dialog messages list before clicking Search to capture new alerts
+        dialog_messages.clear()
+        
         await page.click("input[type='submit'][value='Search']")
         
-        # Wait for the postback navigation to complete (up to 30 seconds for slow governmental servers)
+        # Wait for the postback navigation to complete
         try:
-            await page.wait_for_load_state("load", timeout=30_000)
+            await page.wait_for_load_state("load", timeout=10_000)
         except Exception:
             pass
             
+        # Wait slightly to ensure any dialog event handler has processed the alert
+        await asyncio.sleep(0.8)
+        
+        # Check dialog messages
+        if dialog_messages:
+            last_msg = dialog_messages[-1].lower()
+            if "no record" in last_msg or "record not found" in last_msg:
+                log_callback("ℹ️ Indian Patents Search returned: No Records Found.")
+                return False
+            elif "correct captcha" in last_msg or "invalid captcha" in last_msg or "enter captcha" in last_msg:
+                log_callback("CAPTCHA was not accepted. Refreshing and asking again.")
+                if attempt >= 5:
+                    raise RuntimeError("Indian Patent Search CAPTCHA failed after 5 attempts.")
+                continue
+            else:
+                raise RuntimeError(f"Indian Patents portal error: {dialog_messages[-1]}")
+            
         # Check if the search results have loaded
         if await page.locator("text=Total Document(s):").count() > 0:
-            return
+            return True
             
         # Check if we are still on the CAPTCHA page (meaning CAPTCHA was incorrect)
         if await page.locator("#Captcha").count() > 0:
@@ -571,8 +662,8 @@ async def _solve_india_captcha(
             
         # Fallback: wait a bit more for the results to load
         try:
-            await page.wait_for_selector("text=Total Document(s):", timeout=15_000)
-            return
+            await page.wait_for_selector("text=Total Document(s):", timeout=10_000)
+            return True
         except PlaywrightTimeoutError:
             if attempt >= 5:
                 raise RuntimeError("Indian Patent Search CAPTCHA failed after 5 attempts.")

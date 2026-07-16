@@ -11,7 +11,15 @@ let state = {
   aiResponse: null,
   activeFilter: [],
   activeRequirement: "",
-  indiaOptions: null,
+  indiaOptions: {
+    published: true,
+    granted: false,
+    date_field: "APD",
+    from_date: "01/01/2020",
+    to_date: "",
+    logic_field: "AND",
+    rows: [{ field: "TI", text: "", logic: "AND" }]
+  },
   activeCaptchaTaskId: null,
   captchaMode: "auto",       // "auto" | "manual"
   captchaService: "2captcha", // currently only "2captcha" for auto
@@ -140,9 +148,14 @@ const elIndiaOptDateField = document.getElementById("india-opt-date-field");
 const elIndiaOptLogicField = document.getElementById("india-opt-logic-field");
 const elIndiaOptFromDate = document.getElementById("india-opt-from-date");
 const elIndiaOptToDate = document.getElementById("india-opt-to-date");
-const elBtnIndiaAddRow = document.getElementById("btn-india-add-row");
-const elIndiaQueryRowsContainer = document.getElementById("india-query-rows-container");
 const elBtnIndiaCancel = document.getElementById("btn-india-cancel");
+
+// Manual search panel India elements
+const elBtnSourceGoogle = document.getElementById("btn-source-google");
+const elBtnSourceIndia = document.getElementById("btn-source-india");
+const elBtnManualIndiaAddRow = document.getElementById("btn-manual-india-add-row");
+const elBtnManualIndiaRemoveRow = document.getElementById("btn-manual-india-remove-row");
+const elManualIndiaQueryRowsContainer = document.getElementById("manual-india-query-rows-container");
 
 const elModalCaptcha = document.getElementById("modal-captcha");
 const elCaptchaImg = document.getElementById("captcha-img");
@@ -189,13 +202,47 @@ function initSearchSources() {
     state.searchSources = saved.filter(src => ["google", "india"].includes(src));
   }
   if (state.searchSources.length === 0) state.searchSources = ["google"];
+  
+  // Enforce mutual exclusivity
+  if (state.searchSources.length > 1) {
+    state.searchSources = [state.searchSources[0]];
+  }
+
   syncSourceCheckboxes();
+  syncSourceToggleButtons();
+  updateSourceFieldsVisibility();
 }
 
 function syncSourceCheckboxes() {
   document.querySelectorAll('input[name="search-source"]').forEach(cb => {
     cb.checked = state.searchSources.includes(cb.value);
   });
+}
+
+function syncSourceToggleButtons() {
+  const activeSource = state.searchSources[0] || "google";
+  document.querySelectorAll(".source-toggle-btn").forEach(btn => {
+    if (btn.dataset.source === activeSource) {
+      btn.classList.add("active");
+    } else {
+      btn.classList.remove("active");
+    }
+  });
+}
+
+function updateSourceFieldsVisibility() {
+  const activeSource = state.searchSources[0] || "google";
+  const elGoogleFields = document.getElementById("group-keywords-google");
+  const elIndiaFields = document.getElementById("group-keywords-india");
+  
+  if (activeSource === "google") {
+    if (elGoogleFields) elGoogleFields.classList.remove("hidden");
+    if (elIndiaFields) elIndiaFields.classList.add("hidden");
+  } else {
+    if (elGoogleFields) elGoogleFields.classList.add("hidden");
+    if (elIndiaFields) elIndiaFields.classList.remove("hidden");
+    renderManualIndiaQueryRows();
+  }
 }
 
 function getSourceLabel() {
@@ -206,18 +253,26 @@ function getSourceLabel() {
   return state.searchSources.map(src => labels[src] || src).join(", ");
 }
 
-function handleSearchSourcesChange() {
-  const selected = Array.from(document.querySelectorAll('input[name="search-source"]:checked'))
-    .map(cb => cb.value)
-    .filter(src => ["google", "india"].includes(src));
-  if (selected.length === 0) {
-    state.searchSources = ["google"];
-    syncSourceCheckboxes();
-    alert("At least one patent search source must be selected.");
+function handleSearchSourcesChange(e) {
+  const checkedCheckbox = e.target;
+  if (!checkedCheckbox.checked) {
+    // Prevent unchecking the only checked source
+    checkedCheckbox.checked = true;
     return;
   }
-  state.searchSources = selected;
+
+  // Uncheck all other checkboxes to enforce mutual exclusivity
+  document.querySelectorAll('input[name="search-source"]').forEach(cb => {
+    if (cb !== checkedCheckbox) {
+      cb.checked = false;
+    }
+  });
+
+  state.searchSources = [checkedCheckbox.value];
   localStorage.setItem("searchSources", JSON.stringify(state.searchSources));
+
+  syncSourceToggleButtons();
+  updateSourceFieldsVisibility();
 }
 
 // ── Projects Operations ──────────────────────────────────────────────────────
@@ -364,10 +419,48 @@ async function handleManualScrapeSubmit(e) {
     return;
   }
 
-  const keywords = elKeywordsInput.value.trim();
-  const maxResults = parseInt(elLimitInputManual.value, 10);
-  
-  if (!keywords) return;
+  const activeSource = state.searchSources[0] || "google";
+  let keywords = "";
+  let maxResults = parseInt(elLimitInputManual.value, 10);
+
+  if (activeSource === "google") {
+    keywords = elKeywordsInput.value.trim();
+    if (!keywords) {
+      alert("Please enter at least one keyword.");
+      return;
+    }
+  } else {
+    // Collect rows from manual panel query builder
+    const rows = [];
+    if (elManualIndiaQueryRowsContainer) {
+      elManualIndiaQueryRowsContainer.querySelectorAll(".india-query-row").forEach(rowDiv => {
+        const field = rowDiv.querySelector(".row-field").value;
+        const text = rowDiv.querySelector(".row-text").value.trim();
+        const logic = rowDiv.querySelector(".row-logic").value;
+        rows.push({ field, text, logic });
+      });
+    }
+
+    if (rows.length === 0 || rows.every(r => !r.text)) {
+      alert("Please provide at least one query search term.");
+      return;
+    }
+
+    // Save rows into state.indiaOptions and localStorage
+    state.indiaOptions.rows = rows;
+    localStorage.setItem("indiaOptions", JSON.stringify(state.indiaOptions));
+
+    // Construct human-readable combined query string
+    let queryStr = "";
+    for (let i = 0; i < rows.length; i++) {
+      if (!rows[i].text) continue;
+      if (queryStr) {
+        queryStr += ` ${rows[i].logic} `;
+      }
+      queryStr += `${rows[i].field}: "${rows[i].text}"`;
+    }
+    keywords = queryStr;
+  }
 
   setManualLoading(true);
   if (elBtnTerminateScrape) {
@@ -384,13 +477,17 @@ async function handleManualScrapeSubmit(e) {
   updateStagePill("planning", "active");
 
   try {
-    const kwList = keywords.split(",").map(k => k.trim()).filter(Boolean);
+    // For logging, we show the search terms
+    let displayList = [keywords];
+    if (activeSource === "google") {
+      displayList = keywords.split(",").map(k => k.trim()).filter(Boolean);
+    }
     updateStagePill("planning", "done");
     updateStagePill("scraping", "active");
 
-    for (let i = 0; i < kwList.length; i++) {
-      const kw = kwList[i];
-      writeLogLine(`🔍 Searching for keyword: "${kw}" (Batch ${i+1}/${kwList.length})`, "info");
+    for (let i = 0; i < displayList.length; i++) {
+      const kw = displayList[i];
+      writeLogLine(`🔍 Searching for query: "${kw}" (Batch ${i+1}/${displayList.length})`, "info");
     }
 
     const response = await fetch("/api/scrape", {
@@ -421,7 +518,9 @@ async function handleManualScrapeSubmit(e) {
       writeLogLine("💾 Search results saved successfully.", "success");
       updateStagePill("scraping", "done");
       updateStagePill("complete", "done");
-      elKeywordsInput.value = "";
+      if (activeSource === "google") {
+        elKeywordsInput.value = "";
+      }
       if (result.data) {
         renderHistory(result.data);
       }
@@ -445,12 +544,22 @@ function setManualLoading(isLoading) {
     elLimitInputManual.disabled = true;
     elSpinnerManual.classList.remove("hidden");
     elBtnManualText.innerText = "Scraping...";
+    if (elBtnManualIndiaAddRow) elBtnManualIndiaAddRow.disabled = true;
+    if (elBtnManualIndiaRemoveRow) elBtnManualIndiaRemoveRow.disabled = true;
+    if (elManualIndiaQueryRowsContainer) {
+      elManualIndiaQueryRowsContainer.querySelectorAll("input, select, button").forEach(el => el.disabled = true);
+    }
   } else {
     elBtnManualScrape.disabled = false;
     elKeywordsInput.disabled = false;
     elLimitInputManual.disabled = false;
     elSpinnerManual.classList.add("hidden");
     elBtnManualText.innerText = "Scrape Patents";
+    if (elBtnManualIndiaAddRow) elBtnManualIndiaAddRow.disabled = false;
+    if (elBtnManualIndiaRemoveRow) elBtnManualIndiaRemoveRow.disabled = false;
+    if (elManualIndiaQueryRowsContainer) {
+      elManualIndiaQueryRowsContainer.querySelectorAll("input, select, button").forEach(el => el.disabled = false);
+    }
   }
 }
 
@@ -1600,6 +1709,43 @@ function setupEventListeners() {
   elBtnGlobalExportCsv.addEventListener("click", () => handleGlobalExport("csv"));
   elBtnGlobalExportPdf.addEventListener("click", () => handleGlobalExport("pdf"));
 
+  // Source Toggle Buttons listeners
+  if (elBtnSourceGoogle) {
+    elBtnSourceGoogle.addEventListener("click", () => {
+      state.searchSources = ["google"];
+      localStorage.setItem("searchSources", JSON.stringify(state.searchSources));
+      syncSourceToggleButtons();
+      syncSourceCheckboxes();
+      updateSourceFieldsVisibility();
+    });
+  }
+  if (elBtnSourceIndia) {
+    elBtnSourceIndia.addEventListener("click", () => {
+      state.searchSources = ["india"];
+      localStorage.setItem("searchSources", JSON.stringify(state.searchSources));
+      syncSourceToggleButtons();
+      syncSourceCheckboxes();
+      updateSourceFieldsVisibility();
+    });
+  }
+
+  // Manual Panel India Query builder row add/remove listeners
+  if (elBtnManualIndiaAddRow && elManualIndiaQueryRowsContainer) {
+    elBtnManualIndiaAddRow.addEventListener("click", () => {
+      addRowToUi(elManualIndiaQueryRowsContainer);
+    });
+  }
+  if (elBtnManualIndiaRemoveRow && elManualIndiaQueryRowsContainer) {
+    elBtnManualIndiaRemoveRow.addEventListener("click", () => {
+      const rows = elManualIndiaQueryRowsContainer.querySelectorAll(".india-query-row");
+      if (rows.length > 1) {
+        rows[rows.length - 1].remove();
+      } else {
+        alert("At least one query row is required.");
+      }
+    });
+  }
+
   // India Options modal listeners
   if (elBtnIndiaOptions) {
     elBtnIndiaOptions.addEventListener("click", showIndiaOptionsModal);
@@ -1615,9 +1761,6 @@ function setupEventListeners() {
   });
   if (elIndiaOptionsForm) {
     elIndiaOptionsForm.addEventListener("submit", saveIndiaOptions);
-  }
-  if (elBtnIndiaAddRow) {
-    elBtnIndiaAddRow.addEventListener("click", () => addRowToUi());
   }
 
   // CAPTCHA submit listener
@@ -1707,30 +1850,36 @@ async function initIndiaOptions() {
     }
   } catch (err) {
     console.error("Error loading settings defaults:", err);
-    // Fallback defaults
-    state.indiaOptions = {
-      published: true,
-      granted: false,
-      date_field: "APD",
-      from_date: "01/01/2020",
-      to_date: getYesterdayDateString(),
-      logic_field: "AND",
-      rows: [{ field: "TI", text: "", logic: "AND" }]
-    };
+    // Fallback defaults if not set yet
+    if (!state.indiaOptions) {
+      state.indiaOptions = {
+        published: true,
+        granted: false,
+        date_field: "APD",
+        from_date: "01/01/2020",
+        to_date: getYesterdayDateString(),
+        logic_field: "AND",
+        rows: [{ field: "TI", text: "", logic: "AND" }]
+      };
+    }
   }
 
-  // Enforce default date rules if blank
-  if (!state.indiaOptions.from_date) {
-    state.indiaOptions.from_date = "01/01/2020";
-  }
-  if (!state.indiaOptions.to_date) {
-    state.indiaOptions.to_date = getYesterdayDateString();
+  if (state.indiaOptions) {
+    // Enforce default date rules if blank
+    if (!state.indiaOptions.from_date) {
+      state.indiaOptions.from_date = "01/01/2020";
+    }
+    if (!state.indiaOptions.to_date) {
+      state.indiaOptions.to_date = getYesterdayDateString();
+    }
+
+    // Enforce mutual exclusivity
+    if (state.indiaOptions.published && state.indiaOptions.granted) {
+      state.indiaOptions.granted = false;
+    }
   }
 
-  // Enforce mutual exclusivity
-  if (state.indiaOptions.published && state.indiaOptions.granted) {
-    state.indiaOptions.granted = false;
-  }
+  renderManualIndiaQueryRows();
 }
 
 function showIndiaOptionsModal() {
@@ -1743,18 +1892,12 @@ function showIndiaOptionsModal() {
   elIndiaOptFromDate.value = state.indiaOptions.from_date || "01/01/2020";
   elIndiaOptToDate.value = state.indiaOptions.to_date || getYesterdayDateString();
 
-  // Clear rows
-  elIndiaQueryRowsContainer.innerHTML = "";
-
-  // Render rows
-  const rows = state.indiaOptions.rows || [];
-  rows.forEach(row => addRowToUi(row.field, row.text, row.logic));
-
   elModalIndiaOptions.classList.remove("hidden");
 }
 
-function addRowToUi(field = "TI", text = "", logic = "AND") {
-  const rowCount = elIndiaQueryRowsContainer.querySelectorAll(".india-query-row").length;
+function addRowToUi(container, field = "TI", text = "", logic = "AND") {
+  if (!container) return;
+  const rowCount = container.querySelectorAll(".india-query-row").length;
   if (rowCount >= 5) {
     alert("Maximum of 5 query rows is allowed.");
     return;
@@ -1773,7 +1916,7 @@ function addRowToUi(field = "TI", text = "", logic = "AND") {
     <select class="row-field">
       ${fieldOptions}
     </select>
-    <input type="text" class="row-text" value="${escapeHtml(text)}" placeholder="Query term (leave blank for main keyword)">
+    <input type="text" class="row-text" value="${escapeHtml(text)}" placeholder="Query term (e.g. COMPUTER IMPLEMENTED)">
     <select class="row-logic">
       <option value="AND" ${logic === "AND" ? "selected" : ""}>AND</option>
       <option value="OR" ${logic === "OR" ? "selected" : ""}>OR</option>
@@ -1788,7 +1931,14 @@ function addRowToUi(field = "TI", text = "", logic = "AND") {
     rowDiv.remove();
   });
 
-  elIndiaQueryRowsContainer.appendChild(rowDiv);
+  container.appendChild(rowDiv);
+}
+
+function renderManualIndiaQueryRows() {
+  if (!elManualIndiaQueryRowsContainer) return;
+  elManualIndiaQueryRowsContainer.innerHTML = "";
+  const rows = (state.indiaOptions && state.indiaOptions.rows) || [{ field: "TI", text: "", logic: "AND" }];
+  rows.forEach(row => addRowToUi(elManualIndiaQueryRowsContainer, row.field, row.text, row.logic));
 }
 
 function saveIndiaOptions(e) {
@@ -1801,13 +1951,16 @@ function saveIndiaOptions(e) {
     return;
   }
 
+  // Keep rows from the manual panel if it has any, otherwise use active options
   const rows = [];
-  elIndiaQueryRowsContainer.querySelectorAll(".india-query-row").forEach(rowDiv => {
-    const field = rowDiv.querySelector(".row-field").value;
-    const text = rowDiv.querySelector(".row-text").value.trim();
-    const logic = rowDiv.querySelector(".row-logic").value;
-    rows.push({ field, text, logic });
-  });
+  if (elManualIndiaQueryRowsContainer) {
+    elManualIndiaQueryRowsContainer.querySelectorAll(".india-query-row").forEach(rowDiv => {
+      const field = rowDiv.querySelector(".row-field").value;
+      const text = rowDiv.querySelector(".row-text").value.trim();
+      const logic = rowDiv.querySelector(".row-logic").value;
+      rows.push({ field, text, logic });
+    });
+  }
 
   state.indiaOptions = {
     published,
@@ -1816,7 +1969,7 @@ function saveIndiaOptions(e) {
     from_date: elIndiaOptFromDate.value.trim() || "01/01/2020",
     to_date: elIndiaOptToDate.value.trim() || getYesterdayDateString(),
     logic_field: elIndiaOptLogicField.value,
-    rows: rows.length > 0 ? rows : [{ field: "TI", text: "", logic: "AND" }]
+    rows: rows.length > 0 ? rows : (state.indiaOptions.rows || [{ field: "TI", text: "", logic: "AND" }])
   };
 
   localStorage.setItem("indiaOptions", JSON.stringify(state.indiaOptions));
