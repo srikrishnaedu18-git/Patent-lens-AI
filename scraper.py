@@ -476,14 +476,30 @@ async def scrape_india_patents(
         else:
             dialog_messages.clear()
             await page.click("input[type='submit'][value='Search']")
-            await asyncio.sleep(0.8)
-            if dialog_messages:
-                last_msg = dialog_messages[-1].lower()
-                if "no record" in last_msg or "record not found" in last_msg:
-                    _log("ℹ️ Indian Patents Search returned: No Record Found.")
-                    search_succeeded = False
-                else:
-                    raise RuntimeError(f"Indian Patents portal error: {dialog_messages[-1]}")
+            
+            search_succeeded = None
+            for poll_attempt in range(150): # Up to 30 seconds
+                await asyncio.sleep(0.2)
+                if dialog_messages:
+                    last_msg = dialog_messages[-1].lower()
+                    if "no record" in last_msg or "record not found" in last_msg:
+                        _log("ℹ️ Indian Patents Search returned: No Record Found.")
+                        search_succeeded = False
+                        break
+                    else:
+                        raise RuntimeError(f"Indian Patents portal error: {dialog_messages[-1]}")
+                
+                if await page.locator("text=Total Document(s):").count() > 0 or await page.locator("#tableData").count() > 0:
+                    search_succeeded = True
+                    break
+                    
+                current_url = page.url.lower()
+                if "searchresult" in current_url or "patentdetails" in current_url:
+                    search_succeeded = True
+                    break
+            
+            if search_succeeded is None:
+                search_succeeded = True # Fallback if no error and timeout elapsed
 
         if not search_succeeded:
             await browser.close()
@@ -626,48 +642,54 @@ async def _solve_india_captcha(
         
         await page.click("input[type='submit'][value='Search']")
         
-        # Wait for the postback navigation to complete
-        try:
-            await page.wait_for_load_state("load", timeout=10_000)
-        except Exception:
-            pass
+        # Wait loop for submission result
+        submission_result = None # None = waiting, True = success, False = retry, "empty" = no records
+        for poll_attempt in range(150): # Up to 30 seconds
+            await asyncio.sleep(0.2)
             
-        # Wait slightly to ensure any dialog event handler has processed the alert
-        await asyncio.sleep(0.8)
-        
-        # Check dialog messages
-        if dialog_messages:
-            last_msg = dialog_messages[-1].lower()
-            if "no record" in last_msg or "record not found" in last_msg:
-                log_callback("ℹ️ Indian Patents Search returned: No Records Found.")
-                return False
-            elif "correct captcha" in last_msg or "invalid captcha" in last_msg or "enter captcha" in last_msg:
-                log_callback("CAPTCHA was not accepted. Refreshing and asking again.")
-                if attempt >= 5:
-                    raise RuntimeError("Indian Patent Search CAPTCHA failed after 5 attempts.")
-                continue
-            else:
-                raise RuntimeError(f"Indian Patents portal error: {dialog_messages[-1]}")
+            # A. Check if a dialog occurred
+            if dialog_messages:
+                last_msg = dialog_messages[-1].lower()
+                if "no record" in last_msg or "record not found" in last_msg:
+                    log_callback("ℹ️ Indian Patents Search returned: No Records Found.")
+                    submission_result = "empty"
+                    break
+                elif "correct captcha" in last_msg or "invalid captcha" in last_msg or "enter captcha" in last_msg:
+                    log_callback("CAPTCHA was not accepted (alert dialog). Refreshing and asking again.")
+                    submission_result = False
+                    break
+                else:
+                    raise RuntimeError(f"Indian Patents portal error: {dialog_messages[-1]}")
             
-        # Check if the search results have loaded
-        if await page.locator("text=Total Document(s):").count() > 0:
+            # B. Check if results page elements loaded
+            if await page.locator("text=Total Document(s):").count() > 0 or await page.locator("#tableData").count() > 0:
+                submission_result = True
+                break
+                
+            # C. Check if page URL indicates search results
+            current_url = page.url.lower()
+            if "searchresult" in current_url or "patentdetails" in current_url:
+                submission_result = True
+                break
+                
+            # D. Check if we are still on the search page and the CAPTCHA text box is cleared,
+            # meaning the page reloaded with a new CAPTCHA but without firing a dialog alert.
+            if await page.locator("#Captcha").count() > 0:
+                val = await page.locator("#CaptchaText").first.input_value()
+                if not val: # text box cleared
+                    submission_result = False
+                    break
+                    
+        if submission_result == True:
             return True
-            
-        # Check if we are still on the CAPTCHA page (meaning CAPTCHA was incorrect)
-        if await page.locator("#Captcha").count() > 0:
+        elif submission_result == "empty":
+            return False
+        else:
+            # Captcha was incorrect or timed out
             if attempt >= 5:
                 raise RuntimeError("Indian Patent Search CAPTCHA failed after 5 attempts.")
             log_callback("CAPTCHA was not accepted. Refreshing and asking again.")
             continue
-            
-        # Fallback: wait a bit more for the results to load
-        try:
-            await page.wait_for_selector("text=Total Document(s):", timeout=10_000)
-            return True
-        except PlaywrightTimeoutError:
-            if attempt >= 5:
-                raise RuntimeError("Indian Patent Search CAPTCHA failed after 5 attempts.")
-            log_callback("CAPTCHA was not accepted. Refreshing and asking again.")
 
 
 async def _extract_india_result_rows(page, max_results: int) -> list[dict]:
