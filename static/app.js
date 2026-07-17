@@ -1836,6 +1836,14 @@ function getYesterdayDateString() {
   return `${mm}/${dd}/${yyyy}`;
 }
 
+function getTodayDateString() {
+  const today = new Date();
+  const dd = String(today.getDate()).padStart(2, '0');
+  const mm = String(today.getMonth() + 1).padStart(2, '0');
+  const yyyy = today.getFullYear();
+  return `${mm}/${dd}/${yyyy}`;
+}
+
 async function initIndiaOptions() {
   try {
     const res = await fetch("/api/settings/defaults");
@@ -1858,6 +1866,11 @@ async function initIndiaOptions() {
           if (parts.length === 3 && parseInt(parts[0], 10) > 12) {
             state.indiaOptions.to_date = `${parts[1]}/${parts[0]}/${parts[2]}`;
           }
+        }
+        // Safety: If saved to_date is today or in the future, automatically reset it to yesterday to avoid crash
+        const todayStr = getTodayDateString();
+        if (state.indiaOptions.to_date === todayStr) {
+          state.indiaOptions.to_date = getYesterdayDateString();
         }
       }
     } else {
