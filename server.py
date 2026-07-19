@@ -19,7 +19,8 @@ from typing import AsyncGenerator
 from dotenv import load_dotenv
 load_dotenv(override=True)
 
-from fastapi import FastAPI, HTTPException, BackgroundTasks
+from contextlib import asynccontextmanager
+from fastapi import FastAPI, HTTPException, BackgroundTasks, Response
 from fastapi.responses import StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
@@ -52,9 +53,14 @@ def score_to_relevancy(score) -> str:
     return "Green"
 
 
+# ── Lifespan handler ──────────────────────────────────────────────────────────
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    init_db()
+    yield
+
 # ── App setup ─────────────────────────────────────────────────────────────────
-app = FastAPI(title="PatentLens Studio API")
-init_db()
+app = FastAPI(title="PatentLens Studio API", lifespan=lifespan)
 
 # ── In-memory task store (task_id -> asyncio.Queue) ───────────────────────────
 _task_queues: dict[str, asyncio.Queue] = {}
@@ -1105,6 +1111,11 @@ def export_project_pdf(project_id: int, req: ExportRequest = None):
     except Exception as e:
         logger.error("[API] PDF export failed: %s", e, exc_info=True)
         raise HTTPException(status_code=500, detail=f"PDF generation failed: {str(e)}")
+
+
+@app.get("/favicon.ico", include_in_schema=False)
+async def favicon():
+    return Response(status_code=204)
 
 
 # ── Static UI ─────────────────────────────────────────────────────────────────

@@ -251,34 +251,33 @@
               </div>
             </div>
 
-            <!-- Novelty Audit Dashboard -->
-            <div id="novelty-results-panel" class="novelty-panel hidden">
-              <div class="novelty-panel-header" style="margin-bottom: 16px;">
-                <h3 style="font-size: 1.1rem; font-weight: 700;">Novelty &amp; Relevancy Audit Live-Dashboard</h3>
-                <span class="meta-text" style="font-size: 0.8rem; color: var(--text-secondary);">Real-time comparison of scraped patent abstracts against active keywords/description</span>
+          <!-- Novelty Audit Dashboard -->
+          <div id="novelty-results-panel" class="novelty-panel hidden">
+            <div class="novelty-panel-header" style="margin-bottom: 16px;">
+              <h3 style="font-size: 1.1rem; font-weight: 700;">Novelty &amp; Relevancy Audit Live-Dashboard</h3>
+              <span class="meta-text" style="font-size: 0.8rem; color: var(--text-secondary);">Real-time comparison of scraped patent abstracts against active keywords/description</span>
+            </div>
+            <div class="novelty-columns">
+              <div class="novelty-col novelty-col--red">
+                <div class="novelty-col-title-bar">
+                  <span class="status-marker bg-danger"></span>
+                  Low Novelty / Direct Match (Red)
+                </div>
+                <div id="novelty-list-red" class="novelty-list-container"></div>
               </div>
-              <div class="novelty-columns">
-                <div class="novelty-col novelty-col--red">
-                  <div class="novelty-col-title-bar">
-                    <span class="status-marker bg-danger"></span>
-                    Low Novelty / Direct Match (Red)
-                  </div>
-                  <div id="novelty-list-red" class="novelty-list-container"></div>
+              <div class="novelty-col novelty-col--yellow">
+                <div class="novelty-col-title-bar">
+                  <span class="status-marker bg-warning"></span>
+                  Moderate Overlap (Yellow)
                 </div>
-                <div class="novelty-col novelty-col--yellow">
-                  <div class="novelty-col-title-bar">
-                    <span class="status-marker bg-warning"></span>
-                    Moderate Overlap (Yellow)
-                  </div>
-                  <div id="novelty-list-yellow" class="novelty-list-container"></div>
+                <div id="novelty-list-yellow" class="novelty-list-container"></div>
+              </div>
+              <div class="novelty-col novelty-col--green">
+                <div class="novelty-col-title-bar">
+                  <span class="status-marker bg-success"></span>
+                  High Novelty (Green Gap)
                 </div>
-                <div class="novelty-col novelty-col--green">
-                  <div class="novelty-col-title-bar">
-                    <span class="status-marker bg-success"></span>
-                    High Novelty (Green Gap)
-                  </div>
-                  <div id="novelty-list-green" class="novelty-list-container"></div>
-                </div>
+                <div id="novelty-list-green" class="novelty-list-container"></div>
               </div>
             </div>
           </div>

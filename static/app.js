@@ -777,6 +777,9 @@ function setPipelineLoading(isLoading) {
     if (elBtnTerminateScrape) {
       elBtnTerminateScrape.classList.add("hidden");
     }
+    if (elLiveFeed) {
+      elLiveFeed.classList.add("hidden");
+    }
   }
 }
 
@@ -930,7 +933,6 @@ function handleSSEStageUpdate(data, taskId) {
       setTimeout(() => {
         resetAISearchPanel();
       }, 4000);
-    }
     }
     
     if (data.data) {
