@@ -29,7 +29,7 @@ from typing import Awaitable, Callable, Optional
 from playwright.async_api import async_playwright, TimeoutError as PlaywrightTimeoutError
 from dotenv import load_dotenv
 
-load_dotenv()
+load_dotenv(override=True)
 
 logger = logging.getLogger("scraper")
 
@@ -161,6 +161,7 @@ async def scrape_patents(
     sources: Optional[list[str]] = None,
     india_options: Optional[dict] = None,
     captcha_callback: Optional[Callable[[str], Awaitable[str]]] = None,
+    is_cancelled_callback: Optional[Callable[[], bool]] = None,
 ) -> list[dict]:
     """
     Scrape patents from one or more configured sources and normalize the output.
@@ -189,9 +190,15 @@ async def scrape_patents(
                     progress_callback=progress_callback,
                     india_options=india_options,
                     captcha_callback=captcha_callback,
+                    is_cancelled_callback=is_cancelled_callback,
                 )
             else:
-                results = await handler(query, max_results, progress_callback=progress_callback)
+                results = await handler(
+                    query,
+                    max_results,
+                    progress_callback=progress_callback,
+                    is_cancelled_callback=is_cancelled_callback,
+                )
             all_results.extend(results)
         except Exception as exc:
             message = f"{source.title()} Patents failed: {exc}"
@@ -249,6 +256,7 @@ async def scrape_google_patents(
     query: str,
     max_results: int = 20,
     progress_callback: Optional[Callable[[str], None]] = None,
+    is_cancelled_callback: Optional[Callable[[], bool]] = None,
 ) -> list[dict]:
     """
     Launch a headless Chromium browser, search Google Patents for *query*,
@@ -307,6 +315,9 @@ async def scrape_google_patents(
         _log(f"📋 Found {len(items)} result items on page for query: {query[:60]}")
 
         for idx, item in enumerate(items[:max_results], start=1):
+            if is_cancelled_callback and is_cancelled_callback():
+                _log("⛔ Scrape cancellation detected. Terminating early...")
+                break
             # 1. Patent number / ID and URL
             patent_id = ""
             url_href = ""
@@ -397,6 +408,8 @@ async def scrape_google_patents(
         if results:
             _log(f"🔗 Enriching {len(results)} search results with full titles & abstracts...")
             async def enrich_result(res):
+                if is_cancelled_callback and is_cancelled_callback():
+                    return
                 pid = res.get("patent_id")
                 if pid:
                     t, a = await asyncio.to_thread(_fetch_google_patent_details, pid)
@@ -415,6 +428,7 @@ async def scrape_india_patents(
     progress_callback: Optional[Callable[[str], None]] = None,
     india_options: Optional[dict] = None,
     captcha_callback: Optional[Callable[[str], Awaitable[str]]] = None,
+    is_cancelled_callback: Optional[Callable[[], bool]] = None,
 ) -> list[dict]:
     """
     Search the Indian Patent Advanced Search portal and normalize results.
@@ -472,7 +486,7 @@ async def scrape_india_patents(
             if not captcha_callback:
                 await browser.close()
                 raise RuntimeError("Indian Patent Search requires CAPTCHA, but no CAPTCHA handler is configured.")
-            found = await _solve_india_captcha(page, captcha_callback, _log, dialog_messages, query, options)
+            found = await _solve_india_captcha(page, captcha_callback, _log, dialog_messages, query, options, is_cancelled_callback)
             if not found:
                 await browser.close()
                 return []
@@ -503,6 +517,9 @@ async def scrape_india_patents(
         _log(f"Found {len(rows)} Indian patent result rows for query: {query[:60]}")
 
         for idx, row in enumerate(rows, start=1):
+            if is_cancelled_callback and is_cancelled_callback():
+                _log("⛔ Scrape cancellation detected during detail extraction. Terminating early and saving scraped results...")
+                break
             app_no = row.get("application_number", "").strip()
             title = row.get("title", "").strip() or "—"
             abstract = ""
@@ -550,6 +567,29 @@ async def _apply_india_search_options(page, query: str, options: dict) -> None:
     await page.select_option("#LogicField", options["logic_field"])
 
     rows = options["rows"] or [{"field": "TI", "text": "", "logic": "AND"}]
+    
+    # Compile multiple query rows into a single prefix-based query for TextField1.
+    # The IP India portal's backend crashes with a 500 error on multi-row forms filled with complex queries,
+    # but handles the combined prefixes (TI:, ABS:, CSP:) in TextField1 perfectly.
+    if len(rows) > 1:
+        parts = []
+        for idx, row in enumerate(rows):
+            text_val = (row["text"] or "").strip()
+            if not text_val:
+                continue
+            # Wrap text in parentheses if it contains logical operators to preserve correct precedence
+            if " " in text_val or " AND " in text_val.upper() or " OR " in text_val.upper():
+                text_val = f"({text_val})"
+            
+            part = f"{row['field']}: {text_val}"
+            if idx > 0:
+                prev_logic = rows[idx - 1]["logic"]
+                parts.append(f"{prev_logic} {part}")
+            else:
+                parts.append(part)
+        combined_query = " ".join(parts)
+        rows = [{"field": rows[0]["field"], "text": combined_query, "logic": "AND"}]
+
     for idx, row in enumerate(rows, start=1):
         if idx > 1:
             await page.click("#btnAddRow")
@@ -567,6 +607,7 @@ async def _solve_india_captcha(
     dialog_messages: list[str],
     query: str,
     options: dict,
+    is_cancelled_callback: Optional[Callable[[], bool]] = None,
 ) -> bool:
     """
     Send CAPTCHA image to the app, wait for the answer, and submit.
@@ -574,11 +615,32 @@ async def _solve_india_captcha(
     Raises RuntimeError if CAPTCHA fails after all attempts.
     """
     for attempt in range(1, 6):
+        if is_cancelled_callback and is_cancelled_callback():
+            log_callback("⛔ Scrape cancellation detected during CAPTCHA solving. Terminating...")
+            return False
         # Check if the search terms are missing (e.g. due to form reset on failed captcha)
         need_refill = False
         try:
             current_val = await page.locator("input[name='TextField1']").first.input_value(timeout=1000)
-            expected_val = (options["rows"][0]["text"] if options["rows"] else query) or query
+            rows = options["rows"] or []
+            if len(rows) > 1:
+                parts = []
+                for idx, row in enumerate(rows):
+                    text_val = (row["text"] or "").strip()
+                    if not text_val:
+                        continue
+                    if " " in text_val or " AND " in text_val.upper() or " OR " in text_val.upper():
+                        text_val = f"({text_val})"
+                    part = f"{row['field']}: {text_val}"
+                    if idx > 0:
+                        prev_logic = rows[idx - 1]["logic"]
+                        parts.append(f"{prev_logic} {part}")
+                    else:
+                        parts.append(part)
+                expected_val = " ".join(parts)
+            else:
+                expected_val = (rows[0]["text"] if rows else query) or query
+                
             if current_val != expected_val:
                 need_refill = True
         except Exception:
@@ -619,11 +681,17 @@ async def _solve_india_captcha(
 
             if attempt >= 5:
                 raise RuntimeError("Indian Patent Search CAPTCHA failed after 5 attempts.")
-            log_callback("CAPTCHA was not accepted. Refreshing and asking again.")
-            # Click refresh icon to get a new CAPTCHA image
-            if await page.locator("img[onclick='CaptchaLoad()']").count():
-                await page.locator("img[onclick='CaptchaLoad()']").click()
-                await page.wait_for_timeout(1500)
+            log_callback("CAPTCHA was not accepted. Restarting the search process from scratch...")
+            try:
+                await page.goto(f"{INDIA_PATENTS_BASE}/PublicSearch/", wait_until="domcontentloaded", timeout=45_000)
+                await page.wait_for_selector("select[name='ItemField1']", timeout=20_000)
+                await _apply_india_search_options(page, query, options)
+            except Exception as reload_err:
+                log_callback(f"⚠️ Warning: Failed to reload page after incorrect CAPTCHA: {reload_err}")
+                # Fallback: try to refresh CAPTCHA if reload failed
+                if await page.locator("img[onclick='CaptchaLoad()']").count():
+                    await page.locator("img[onclick='CaptchaLoad()']").click()
+                    await page.wait_for_timeout(1500)
 
 
 async def _extract_india_result_rows(page, max_results: int) -> list[dict]:

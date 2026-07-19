@@ -15,7 +15,7 @@ from datetime import datetime
 from typing import AsyncGenerator
 
 from dotenv import load_dotenv
-load_dotenv()
+load_dotenv(override=True)
 
 from fastapi import FastAPI, HTTPException, BackgroundTasks
 from fastapi.responses import StreamingResponse
@@ -538,6 +538,7 @@ async def _manual_pipeline(
                     sources=sources,
                     india_options=india_options,
                     captcha_callback=lambda image, tid=task_id, cm=captcha_mode, cs=captcha_service: _request_captcha(tid, image, cm, cs),
+                    is_cancelled_callback=lambda: _task_cancelled.get(task_id, False),
                 )
                 if patents:
                     source_label = ", ".join(sorted({p.get("source", "Google Patents") for p in patents}))

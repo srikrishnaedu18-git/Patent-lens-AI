@@ -25,7 +25,7 @@ from dotenv import load_dotenv
 logger = logging.getLogger("ai_agent")
 
 # ── Load environment ─────────────────────────────────────────────────────────
-load_dotenv()
+load_dotenv(override=True)
 
 # ── Gemini client initialisation ─────────────────────────────────────────────
 try:
