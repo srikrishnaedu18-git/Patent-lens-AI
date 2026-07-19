@@ -128,6 +128,36 @@ uvicorn server:app --host 127.0.0.1 --port 8000 --reload
 
 The SQLite database is created automatically at startup as `patent_lens.db`.
 
+## Production & Docker Deployment
+
+The repository includes a `Dockerfile` configured to set up Python 3.10 and all Playwright system dependencies needed for Chromium browser automation.
+
+### Build and Run with Docker Locally
+
+1. Build the image:
+   ```bash
+   docker build -t patent-lens-studio .
+   ```
+
+2. Run the container:
+   ```bash
+   docker run -d \
+     -p 8000:8000 \
+     -e GEMINI_API_KEY="your_gemini_api_key_here" \
+     -e ENV="production" \
+     --name patent-lens \
+     patent-lens-studio
+   ```
+
+### Deploying to Cloud Providers
+
+The app can be deployed directly to container hosting platforms using the provided `Dockerfile`.
+
+* **Railway**: Connect your repository, add your variables (`GEMINI_API_KEY`, `ENV=production`), and generate a domain.
+* **Render**: Deploy as a Web Service with the `Docker` runtime and configure the environment variables in the dashboard.
+
+For detailed steps, refer to `deployment_guide.md`.
+
 ## Using the App
 
 1. Create a project from the sidebar.
