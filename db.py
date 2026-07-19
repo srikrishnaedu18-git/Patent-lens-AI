@@ -60,6 +60,8 @@ def init_db():
         url TEXT NOT NULL,
         confidence_score REAL,
         ai_reasoning TEXT,
+        overlap_reasons TEXT,
+        difference_reasons TEXT,
         FOREIGN KEY (search_id) REFERENCES searches (id) ON DELETE CASCADE
     );
     """)
@@ -77,6 +79,8 @@ def init_db():
         ("patents",  "source",           "TEXT DEFAULT 'Google Patents'"),
         ("patents",  "confidence_score", "REAL"),
         ("patents",  "ai_reasoning",     "TEXT"),
+        ("patents",  "overlap_reasons",   "TEXT"),
+        ("patents",  "difference_reasons", "TEXT"),
     ]
 
     for table, column, col_def in migrations:
@@ -319,7 +323,13 @@ def get_all_project_patents(project_id: int) -> list[dict]:
     conn.close()
     return patents
 
-def update_patent_audit(patent_id: int, confidence_score: float, reasoning: str):
+def update_patent_audit(
+    patent_id: int,
+    confidence_score: float,
+    reasoning: str,
+    overlap_reasons: str = "",
+    difference_reasons: str = "",
+):
     """Updates the AI audit details for a specific patent by database row ID."""
     conn = get_db_connection()
     cursor = conn.cursor()
@@ -327,10 +337,11 @@ def update_patent_audit(patent_id: int, confidence_score: float, reasoning: str)
         cursor.execute(
             """
             UPDATE patents
-            SET confidence_score = ?, ai_reasoning = ?
+            SET confidence_score = ?, ai_reasoning = ?,
+                overlap_reasons = ?, difference_reasons = ?
             WHERE id = ?;
             """,
-            (confidence_score, reasoning, patent_id),
+            (confidence_score, reasoning, overlap_reasons, difference_reasons, patent_id),
         )
         conn.commit()
     except Exception as e:

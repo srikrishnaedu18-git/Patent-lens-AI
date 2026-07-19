@@ -103,6 +103,28 @@ class RelevanceAssessment(BaseModel):
             "chosen relevance category."
         )
     )
+    overlap_reasons: str = Field(
+        default="",
+        description=(
+            "A detailed explanation of WHAT specific technical features, mechanisms, or "
+            "functionalities in this patent overlap with the user's invention. "
+            "Mention specific shared subsystems, components, algorithms, or methods. "
+            "E.g. 'Both inventions use piezoelectric pressure sensors embedded in seat "
+            "belt retractors to measure occupant weight.' "
+            "Leave empty only if there is zero technical overlap."
+        )
+    )
+    difference_reasons: str = Field(
+        default="",
+        description=(
+            "A detailed explanation of HOW the user's invention differs from this patent. "
+            "Highlight what the user's invention does that this patent does NOT cover, "
+            "including unique mechanisms, novel combinations, or different application domains. "
+            "E.g. 'The user invention dynamically adjusts pre-tension force in real-time "
+            "using a feedback loop, whereas this patent only performs static calibration.' "
+            "Leave empty only if the patent fully covers the invention."
+        )
+    )
 
 
 # ── Step 1: AI Keyword / Query Generator ─────────────────────────────────────
@@ -211,6 +233,14 @@ def analyze_relevance(
         "- closely_relevant (Red status): The patent covers most or all of the core mechanical details/inventive concept.\n"
         "- mildly_relevant (Yellow status): The patent discloses some elements or subsystems of the mechanism, but not the specific combination.\n"
         "- not_relevant (Green status): The patent is unrelated or has only superficial/generic keyword overlaps.\n\n"
+        "IMPORTANT — You MUST provide detailed analysis:\n"
+        "1. overlap_reasons: Explain EXACTLY which specific technical features, components, algorithms, or methods "
+        "in this patent overlap with the user's invention. Mention specific functionalities that are shared. "
+        "Be precise (e.g. 'Both use capacitive soil moisture sensors connected via LoRa to a central hub').\n"
+        "2. difference_reasons: Explain EXACTLY how the user's invention differs from this patent. "
+        "What does the user's invention do that this patent does NOT? What novel mechanisms, combinations, "
+        "or approaches does the user's invention have? (e.g. 'This patent lacks the machine learning-based "
+        "predictive watering schedule that the user's invention implements').\n\n"
         "Be strict and professional. Place under closely_relevant or mildly_relevant only if there is a clear technical overlap."
     )
 
@@ -271,4 +301,6 @@ def analyze_relevance(
             relevance_category="not_relevant",
             confidence_score=0.0,
             reasoning=f"Relevance check failed (error: {str(exc)[:100]})",
+            overlap_reasons="",
+            difference_reasons="",
         )

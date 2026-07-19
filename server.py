@@ -9,6 +9,8 @@ import csv
 import json
 import asyncio
 import logging
+import sys
+import concurrent.futures
 import uuid
 from pathlib import Path
 from datetime import datetime
@@ -54,10 +56,41 @@ def score_to_relevancy(score) -> str:
 app = FastAPI(title="PatentLens Studio API")
 init_db()
 
-# ── In-memory task store (task_id → asyncio.Queue) ───────────────────────────
+# ── In-memory task store (task_id -> asyncio.Queue) ───────────────────────────
 _task_queues: dict[str, asyncio.Queue] = {}
 _captcha_futures: dict[str, asyncio.Future] = {}
 _task_cancelled: dict[str, bool] = {}  # tracks if a task was terminate-requested
+
+# ── Thread-pool executor for Playwright (Windows compat) ─────────────────────
+_scraper_executor = concurrent.futures.ThreadPoolExecutor(max_workers=2)
+
+def _run_scraper_in_thread(query: str, max_results: int, progress_callback=None) -> list[dict]:
+    """
+    Run scrape_patents in a fresh event loop inside a worker thread.
+    On Windows, uvicorn uses SelectorEventLoop which does not support
+    subprocess operations that Playwright needs. This workaround creates
+    a ProactorEventLoop (or default) per-thread to avoid NotImplementedError.
+    """
+    if sys.platform == "win32":
+        loop = asyncio.ProactorEventLoop()
+    else:
+        loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    try:
+        return loop.run_until_complete(scrape_patents(query, max_results, progress_callback=progress_callback))
+    finally:
+        loop.close()
+
+async def run_scraper(query: str, max_results: int, progress_callback=None) -> list[dict]:
+    """Async wrapper: offloads the blocking scraper call to a thread."""
+    loop = asyncio.get_event_loop()
+    return await loop.run_in_executor(
+        _scraper_executor,
+        _run_scraper_in_thread,
+        query,
+        max_results,
+        progress_callback,
+    )
 
 
 # ── Pydantic schemas ──────────────────────────────────────────────────────────
@@ -621,7 +654,13 @@ async def _audit_pipeline(search_id: int, requirement: str, task_id: str):
             db_id = patent.get("id")
             try:
                 assessment = await asyncio.to_thread(analyze_relevance, req_text, title, abstract)
-                update_patent_audit(db_id, assessment.confidence_score, assessment.reasoning)
+                update_patent_audit(
+                    db_id,
+                    assessment.confidence_score,
+                    assessment.reasoning,
+                    overlap_reasons=getattr(assessment, 'overlap_reasons', ''),
+                    difference_reasons=getattr(assessment, 'difference_reasons', ''),
+                )
                 cat = assessment.relevance_category
                 emoji = "🔴" if cat == "closely_relevant" else ("🟡" if cat == "mildly_relevant" else "🟢")
                 label = score_to_relevancy(assessment.confidence_score)
@@ -630,9 +669,16 @@ async def _audit_pipeline(search_id: int, requirement: str, task_id: str):
                     "current": idx,
                     "total": total,
                     "patent_id": db_id,
+                    "patent_code": patent.get("patent_id", ""),
+                    "patent_url": patent.get("url", ""),
+                    "title": title,
+                    "reasoning": assessment.reasoning,
+                    "overlap_reasons": getattr(assessment, 'overlap_reasons', ''),
+                    "difference_reasons": getattr(assessment, 'difference_reasons', ''),
                     "confidence_score": assessment.confidence_score,
                     "relevance_category": cat,
                     "relevancy_label": label,
+                    "comparison_query": req_text,
                     "message": (
                         f"{emoji} [{idx}/{total}] {cat.replace('_', ' ').title()} "
                         f"(score={assessment.confidence_score:.2f}) — {title[:55]}"
@@ -865,7 +911,7 @@ async def stream_task(task_id: str):
 # ── Export Helpers ────────────────────────────────────────────────────────────
 
 EXPORT_FIELDS = ["source", "patent_id", "keywords", "title", "relevancy", "abstract", "url",
-                 "confidence_score", "ai_reasoning"]
+                 "confidence_score", "ai_reasoning", "overlap_reasons", "difference_reasons"]
 
 def _apply_relevancy_filter(patents: list[dict], relevancy_filter: list[str] | None) -> list[dict]:
     """Filter patents by relevancy labels if a filter is active."""

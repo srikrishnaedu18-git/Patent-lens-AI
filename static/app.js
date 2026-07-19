@@ -9,8 +9,10 @@ let state = {
   auditMode: "sequential",
   searchSources: ["google"],
   aiResponse: null,
-  activeFilter: [],
-  activeRequirement: "",
+  activeFilter: [],          // e.g. ["Red", "Yellow"]
+  activeRequirement: "",      // stored requirement text for re-auditing
+  lastScrapedSearchId: null,
+  lastScrapedKeywords: "",
   indiaOptions: {
     published: true,
     granted: false,
@@ -44,6 +46,7 @@ const elPanelAi = document.getElementById("panel-ai");
 // Manual Search Form
 const elScrapeFormManual = document.getElementById("scrape-form-manual");
 const elKeywordsInput = document.getElementById("keywords-input");
+const elManualDescriptionInput = document.getElementById("manual-description-input");
 const elLimitInputManual = document.getElementById("limit-input-manual");
 const elBtnManualScrape = document.getElementById("btn-manual-scrape");
 const elBtnManualText = document.getElementById("btn-manual-text");
@@ -122,6 +125,13 @@ const elThemeToggle = document.getElementById("theme-toggle");
 const elThemeIconSun = document.getElementById("theme-icon-sun");
 const elThemeIconMoon = document.getElementById("theme-icon-moon");
 
+// Live log audit & Novelty Dashboard elements
+const elBtnLiveAudit = document.getElementById("btn-live-audit");
+const elNoveltyResultsPanel = document.getElementById("novelty-results-panel");
+const elNoveltyListRed = document.getElementById("novelty-list-red");
+const elNoveltyListYellow = document.getElementById("novelty-list-yellow");
+const elNoveltyListGreen = document.getElementById("novelty-list-green");
+
 // New modals & buttons
 const elModalFilter = document.getElementById("modal-filter");
 const elBtnRelevancyFilter = document.getElementById("btn-relevancy-filter");
@@ -182,14 +192,6 @@ function setTheme(theme) {
   state.theme = theme;
   document.documentElement.setAttribute("data-theme", theme);
   localStorage.setItem("theme", theme);
-  
-  if (theme === "dark") {
-    elThemeIconSun.classList.remove("hidden");
-    elThemeIconMoon.classList.add("hidden");
-  } else {
-    elThemeIconSun.classList.add("hidden");
-    elThemeIconMoon.classList.remove("hidden");
-  }
 }
 
 function toggleTheme() {
@@ -408,6 +410,13 @@ function clearLiveLog() {
   elAuditProgressBarWrap.classList.add("hidden");
   elAuditProgressBar.style.width = "0%";
   Object.values(pills).forEach(p => p.className = "stage-pill");
+  
+  // Reset Novelty Dashboard
+  if (elNoveltyResultsPanel) elNoveltyResultsPanel.classList.add("hidden");
+  if (elNoveltyListRed) elNoveltyListRed.innerHTML = "";
+  if (elNoveltyListYellow) elNoveltyListYellow.innerHTML = "";
+  if (elNoveltyListGreen) elNoveltyListGreen.innerHTML = "";
+  if (elBtnLiveAudit) elBtnLiveAudit.classList.add("hidden");
 }
 
 // ── Manual Scrape Flow ──────────────────────────────────────────────────────
@@ -519,7 +528,7 @@ async function handleManualScrapeSubmit(e) {
       writeLogLine("💾 Search results saved successfully.", "success");
       updateStagePill("scraping", "done");
       updateStagePill("complete", "done");
-      if (activeSource === "google") {
+      if (activeSource === "google" && elKeywordsInput) {
         elKeywordsInput.value = "";
       }
       if (result.data) {
@@ -543,6 +552,7 @@ function setManualLoading(isLoading) {
     elBtnManualScrape.disabled = true;
     elKeywordsInput.disabled = true;
     elLimitInputManual.disabled = true;
+    if (elManualDescriptionInput) elManualDescriptionInput.disabled = true;
     elSpinnerManual.classList.remove("hidden");
     elBtnManualText.innerText = "Scraping...";
     if (elBtnManualIndiaAddRow) elBtnManualIndiaAddRow.disabled = true;
@@ -554,6 +564,7 @@ function setManualLoading(isLoading) {
     elBtnManualScrape.disabled = false;
     elKeywordsInput.disabled = false;
     elLimitInputManual.disabled = false;
+    if (elManualDescriptionInput) elManualDescriptionInput.disabled = false;
     elSpinnerManual.classList.add("hidden");
     elBtnManualText.innerText = "Scrape Patents";
     if (elBtnManualIndiaAddRow) elBtnManualIndiaAddRow.disabled = false;
@@ -858,6 +869,8 @@ function handleSSEStageUpdate(data, taskId) {
     // Live-update individual patent card if patent_id is in the event
     if (data.patent_id && data.relevance_category) {
       updatePatentCardRelevancy(data.patent_id, data.relevance_category, data.confidence_score);
+      // Populate novelty live dashboard
+      addPatentToNoveltyDashboard(data);
     }
   }
 
@@ -885,13 +898,39 @@ function handleSSEStageUpdate(data, taskId) {
       }
     }
     
+    // Save last scraped search run information & show AI audit option if scraping finished
+    if (state.activeFlow === "manual_scrape" && data.scraped && data.scraped.length > 0) {
+      const validRuns = data.scraped.filter(run => run.search_id);
+      if (validRuns.length > 0) {
+        state.lastScrapedSearchId = validRuns[validRuns.length - 1].search_id;
+        state.lastScrapedKeywords = validRuns.map(r => r.keyword).join(", ");
+        const manualDesc = elManualDescriptionInput ? elManualDescriptionInput.value.trim() : "";
+        state.activeRequirement = manualDesc || state.lastScrapedKeywords;
+        if (elBtnLiveAudit) {
+          elBtnLiveAudit.classList.remove("hidden");
+        }
+        writeLogLine("💡 Scraping complete. Click 'AI Audit Scraped' in the log header to audit target patents.", "info");
+      }
+    } else if (state.activeFlow === "ai_search" && data.scraped_count !== undefined) {
+      state.lastScrapedSearchId = data.search_id;
+      state.lastScrapedKeywords = elRequirementInput.value.trim() || "";
+      state.activeRequirement = state.lastScrapedKeywords;
+      if (elBtnLiveAudit) {
+        elBtnLiveAudit.classList.remove("hidden");
+      }
+      writeLogLine("💡 Scraping complete. Click 'AI Audit Scraped' in the log header to audit target patents.", "info");
+    } else if (state.activeFlow === "ai_audit") {
+      writeLogLine("💡 Relevance assessment completed. Study the Novelty & Relevancy Dashboard below.", "info");
+    }
+
     setPipelineLoading(false);
     
-    if (state.activeFlow !== "manual_scrape") {
+    if (state.activeFlow === "ai_search") {
       // Automatically transition back to requirement input for AI flows
       setTimeout(() => {
         resetAISearchPanel();
       }, 4000);
+    }
     }
     
     if (data.data) {
@@ -905,6 +944,93 @@ function handleSSEStageUpdate(data, taskId) {
     setPipelineLoading(false);
     alert(`Pipeline Error: ${message}`);
   }
+}
+
+function addPatentToNoveltyDashboard(patent) {
+  if (!elNoveltyResultsPanel) return;
+  elNoveltyResultsPanel.classList.remove("hidden");
+
+  const label = patent.relevancy_label; // Red, Yellow, Green
+  let listEl = null;
+  let noveltyPercent = 0;
+  let barColorClass = "";
+  let badgeText = "";
+  let badgeClass = "";
+
+  if (label === "Red") {
+    listEl = elNoveltyListRed;
+    noveltyPercent = Math.round((1 - patent.confidence_score) * 100);
+    barColorClass = "red";
+    badgeText = "No/Low Novelty";
+    badgeClass = "red";
+  } else if (label === "Yellow") {
+    listEl = elNoveltyListYellow;
+    noveltyPercent = Math.round((1 - patent.confidence_score) * 100);
+    barColorClass = "yellow";
+    badgeText = "Moderate Novelty";
+    badgeClass = "yellow";
+  } else if (label === "Green") {
+    listEl = elNoveltyListGreen;
+    noveltyPercent = Math.round((1 - patent.confidence_score) * 100);
+    barColorClass = "green";
+    badgeText = "High Novelty";
+    badgeClass = "green";
+  }
+
+  if (!listEl) return;
+
+  // Build structured reasoning for novelty cards
+  const overlapText = patent.overlap_reasons || "";
+  const differenceText = patent.difference_reasons || "";
+  const reasoningText = patent.reasoning || "";
+
+  let reasoningSections = "";
+  if (overlapText.trim()) {
+    reasoningSections += `
+      <div class="ai-reasoning-section overlap-section" style="margin-top: 6px;">
+        <div class="section-label" style="font-size: 0.68rem;">🔴 Overlap</div>
+        <div class="section-text" style="font-size: 0.75rem;">${escapeHtml(overlapText)}</div>
+      </div>`;
+  }
+  if (differenceText.trim()) {
+    reasoningSections += `
+      <div class="ai-reasoning-section difference-section" style="margin-top: 4px;">
+        <div class="section-label" style="font-size: 0.68rem;">🟢 Differs</div>
+        <div class="section-text" style="font-size: 0.75rem;">${escapeHtml(differenceText)}</div>
+      </div>`;
+  }
+
+  // Render the card HTML
+  const card = document.createElement("div");
+  card.className = "novelty-card";
+  card.innerHTML = `
+    <div class="novelty-card-header">
+      <a href="${escapeHtml(patent.patent_url || '#')}" target="_blank" class="novelty-link">
+        ${escapeHtml(patent.patent_code || 'Patent')}
+        <svg style="width:10px;height:10px;margin-left:2px;" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6M15 3h6v6M10 14L21 3"/></svg>
+      </a>
+      <span class="novelty-score-badge novelty-score-badge--${badgeClass}">${badgeText}</span>
+    </div>
+    <h5 class="novelty-title">${escapeHtml(patent.title)}</h5>
+    <div class="novelty-comparison" title="${escapeHtml(patent.comparison_query)}">
+      <strong>Compared with:</strong> "${escapeHtml(patent.comparison_query)}"
+    </div>
+    <div class="novelty-bar-wrap">
+      <div class="novelty-bar-fill novelty-bar-fill--${barColorClass}" style="width: ${noveltyPercent}%;"></div>
+    </div>
+    <div style="font-size: 0.72rem; text-align: right; color: var(--text-secondary); margin-top: 2px; font-weight: 600;">
+      Novelty Score: ${noveltyPercent}%
+    </div>
+    <div class="novelty-reasoning">
+      <strong>Gemini:</strong> ${escapeHtml(reasoningText)}
+    </div>
+    ${reasoningSections}
+  `;
+
+  listEl.appendChild(card);
+  
+  // Auto-scroll list to bottom as new items show up
+  listEl.scrollTop = listEl.scrollHeight;
 }
 
 function updateStagePill(stage, status) {
@@ -968,7 +1094,7 @@ function renderHistory(searches) {
           <span class="meta-text">${dateStr}</span>
         </div>
         <div class="query-actions-wrapper">
-          ${isAi ? `<button type="button" class="btn-ai-audit-trigger" data-search-id="${s.id}" title="Audit these patents with Gemini">AI Audit</button>` : ''}
+          <button type="button" class="btn-ai-audit-trigger" data-search-id="${s.id}" title="Audit these patents with Gemini">AI Audit</button>
           <button type="button" class="btn-icon toggle-expand-btn" aria-label="Toggle accordion">
             <svg class="icon chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
               <polyline points="6 9 12 15 18 9"></polyline>
@@ -1006,8 +1132,8 @@ function renderHistory(searches) {
     });
 
     // Audit button click handler
-    if (isAi) {
-      const btnAudit = card.querySelector(".btn-ai-audit-trigger");
+    const btnAudit = card.querySelector(".btn-ai-audit-trigger");
+    if (btnAudit) {
       btnAudit.addEventListener("click", (e) => {
         e.stopPropagation();
         triggerAudit(s.id, s.query);
@@ -1068,6 +1194,40 @@ function renderPatentCards(patents, query, searchId) {
     const cardClass = `patent-card relevancy-${relevancy.toLowerCase()}`;
     const source = p.source || "Google Patents";
 
+    // Build structured reasoning HTML
+    let reasoningHtml = '';
+    const hasOverlap = p.overlap_reasons && p.overlap_reasons.trim();
+    const hasDifference = p.difference_reasons && p.difference_reasons.trim();
+    const hasBasicReasoning = p.ai_reasoning && p.ai_reasoning.trim();
+
+    if (hasBasicReasoning || hasOverlap || hasDifference) {
+      reasoningHtml = `<div class="ai-reasoning-callout">`;
+      
+      if (hasBasicReasoning) {
+        reasoningHtml += `
+          <div class="reasoning-header">🤖 Gemini Assessment</div>
+          <div style="color: var(--text-secondary); font-style: italic;">${escapeHtml(p.ai_reasoning)}</div>`;
+      }
+
+      if (hasOverlap) {
+        reasoningHtml += `
+          <div class="ai-reasoning-section overlap-section">
+            <div class="section-label">🔴 Why It Overlaps With Your Invention</div>
+            <div class="section-text">${escapeHtml(p.overlap_reasons)}</div>
+          </div>`;
+      }
+
+      if (hasDifference) {
+        reasoningHtml += `
+          <div class="ai-reasoning-section difference-section">
+            <div class="section-label">🟢 How Your Invention Differs</div>
+            <div class="section-text">${escapeHtml(p.difference_reasons)}</div>
+          </div>`;
+      }
+
+      reasoningHtml += `</div>`;
+    }
+
     return `
       <div class="${cardClass}" id="patent-card-${p.id}" data-relevancy="${relevancy}">
         <input type="checkbox" class="patent-select-checkbox" data-patent-id="${p.id}"
@@ -1086,11 +1246,7 @@ function renderPatentCards(patents, query, searchId) {
             <span class="relevancy-badge relevancy-badge--${relevancy.toLowerCase()}">${relevancy}</span>
           </div>
           <p class="patent-abstract">${highlight(p.abstract)}</p>
-          ${p.ai_reasoning ? `
-            <div class="ai-reasoning-callout">
-              <strong>Gemini Assessment:</strong> <em>${escapeHtml(p.ai_reasoning)}</em>
-            </div>
-          ` : ''}
+          ${reasoningHtml}
         </div>
       </div>
     `;
@@ -1512,7 +1668,9 @@ async function handleTerminateScrape() {
 
 // ── Event Handlers ───────────────────────────────────────────────────────────
 function setupEventListeners() {
-  elThemeToggle.addEventListener("click", toggleTheme);
+  if (elThemeToggle) {
+    elThemeToggle.addEventListener("click", toggleTheme);
+  }
 
   if (elBtnTerminateScrape) {
     elBtnTerminateScrape.addEventListener("click", handleTerminateScrape);
@@ -1521,6 +1679,32 @@ function setupEventListeners() {
   // Mode buttons
   elBtnModeManual.addEventListener("click", () => switchSearchMode("manual"));
   elBtnModeAi.addEventListener("click", () => switchSearchMode("ai"));
+
+  // Live Log Audit Button and Auditing Pill Option
+  if (elBtnLiveAudit) {
+    elBtnLiveAudit.addEventListener("click", () => {
+      if (!state.lastScrapedSearchId) {
+        alert("No recently scraped data available. Please run a search first.");
+        return;
+      }
+      const requirement = state.activeRequirement || elRequirementInput.value.trim() || state.lastScrapedKeywords || "";
+      elBtnLiveAudit.classList.add("hidden");
+      triggerAudit(state.lastScrapedSearchId, requirement);
+    });
+  }
+
+  const pillAuditing = pills.auditing || document.getElementById("pill-auditing");
+  if (pillAuditing) {
+    pillAuditing.addEventListener("click", () => {
+      if (!state.lastScrapedSearchId) {
+        alert("No recently scraped data available. Please run a search first.");
+        return;
+      }
+      const requirement = state.activeRequirement || elRequirementInput.value.trim() || state.lastScrapedKeywords || "";
+      if (elBtnLiveAudit) elBtnLiveAudit.classList.add("hidden");
+      triggerAudit(state.lastScrapedSearchId, requirement);
+    });
+  }
 
   // Forms
   elScrapeFormManual.addEventListener("submit", handleManualScrapeSubmit);
