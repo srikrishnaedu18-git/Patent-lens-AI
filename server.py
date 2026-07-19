@@ -9,6 +9,8 @@ import csv
 import json
 import asyncio
 import logging
+import sys
+import concurrent.futures
 import uuid
 from pathlib import Path
 from datetime import datetime
@@ -50,8 +52,39 @@ def score_to_relevancy(score) -> str:
 app = FastAPI(title="PatentLens Studio API")
 init_db()
 
-# ── In-memory task store (task_id → asyncio.Queue) ───────────────────────────
+# ── In-memory task store (task_id -> asyncio.Queue) ───────────────────────────
 _task_queues: dict[str, asyncio.Queue] = {}
+
+# ── Thread-pool executor for Playwright (Windows compat) ─────────────────────
+_scraper_executor = concurrent.futures.ThreadPoolExecutor(max_workers=2)
+
+def _run_scraper_in_thread(query: str, max_results: int, progress_callback=None) -> list[dict]:
+    """
+    Run scrape_patents in a fresh event loop inside a worker thread.
+    On Windows, uvicorn uses SelectorEventLoop which does not support
+    subprocess operations that Playwright needs. This workaround creates
+    a ProactorEventLoop (or default) per-thread to avoid NotImplementedError.
+    """
+    if sys.platform == "win32":
+        loop = asyncio.ProactorEventLoop()
+    else:
+        loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    try:
+        return loop.run_until_complete(scrape_patents(query, max_results, progress_callback=progress_callback))
+    finally:
+        loop.close()
+
+async def run_scraper(query: str, max_results: int, progress_callback=None) -> list[dict]:
+    """Async wrapper: offloads the blocking scraper call to a thread."""
+    loop = asyncio.get_event_loop()
+    return await loop.run_in_executor(
+        _scraper_executor,
+        _run_scraper_in_thread,
+        query,
+        max_results,
+        progress_callback,
+    )
 
 
 # ── Pydantic schemas ──────────────────────────────────────────────────────────
@@ -151,7 +184,7 @@ async def _ai_pipeline(
                             queue.put({"stage": "scraping", "message": m})
                         )
                     )
-                results = await scrape_patents(q, max_results, progress_callback=_progress_sync)
+                results = await run_scraper(q, max_results, progress_callback=_progress_sync)
                 all_raw.extend(results)
                 await _push(queue, {
                     "stage": "scraping",
@@ -244,7 +277,13 @@ async def _audit_pipeline(search_id: int, requirement: str, task_id: str):
             db_id = patent.get("id")
             try:
                 assessment = await asyncio.to_thread(analyze_relevance, req_text, title, abstract)
-                update_patent_audit(db_id, assessment.confidence_score, assessment.reasoning)
+                update_patent_audit(
+                    db_id,
+                    assessment.confidence_score,
+                    assessment.reasoning,
+                    overlap_reasons=getattr(assessment, 'overlap_reasons', ''),
+                    difference_reasons=getattr(assessment, 'difference_reasons', ''),
+                )
                 cat = assessment.relevance_category
                 emoji = "🔴" if cat == "closely_relevant" else ("🟡" if cat == "mildly_relevant" else "🟢")
                 label = score_to_relevancy(assessment.confidence_score)
@@ -253,9 +292,16 @@ async def _audit_pipeline(search_id: int, requirement: str, task_id: str):
                     "current": idx,
                     "total": total,
                     "patent_id": db_id,
+                    "patent_code": patent.get("patent_id", ""),
+                    "patent_url": patent.get("url", ""),
+                    "title": title,
+                    "reasoning": assessment.reasoning,
+                    "overlap_reasons": getattr(assessment, 'overlap_reasons', ''),
+                    "difference_reasons": getattr(assessment, 'difference_reasons', ''),
                     "confidence_score": assessment.confidence_score,
                     "relevance_category": cat,
                     "relevancy_label": label,
+                    "comparison_query": req_text,
                     "message": (
                         f"{emoji} [{idx}/{total}] {cat.replace('_', ' ').title()} "
                         f"(score={assessment.confidence_score:.2f}) — {title[:55]}"
@@ -347,7 +393,7 @@ async def trigger_manual_scrape(req: ManualScrapeRequest):
     for kw in keywords_list:
         try:
             logger.info("[API] Manual scrape for keyword: %s", kw)
-            patents = await scrape_patents(kw, max_results)
+            patents = await run_scraper(kw, max_results)
             if patents:
                 search_id = create_search(project_id, kw, search_mode="manual")
                 save_patents(search_id, patents)
@@ -355,8 +401,9 @@ async def trigger_manual_scrape(req: ManualScrapeRequest):
             else:
                 scraped_runs.append({"keyword": kw, "count": 0, "error": "No results found"})
         except Exception as e:
-            logger.error("[API] Manual scrape error for '%s': %s", kw, e, exc_info=True)
-            scraped_runs.append({"keyword": kw, "count": 0, "error": str(e)})
+            err_msg = f"{type(e).__name__}: {e}" if str(e) else f"{type(e).__name__} (no message)"
+            logger.error("[API] Manual scrape error for '%s': %s", kw, err_msg, exc_info=True)
+            scraped_runs.append({"keyword": kw, "count": 0, "error": err_msg})
 
     return {
         "status": "success",

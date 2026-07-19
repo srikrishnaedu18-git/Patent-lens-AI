@@ -175,18 +175,18 @@ async def scrape_patents(
             if not title and not abstract:
                 raw = await item.inner_text()
                 lines = [l.strip() for l in raw.splitlines() if l.strip()]
-                title = lines[0] if lines else "—"
-                abstract = " ".join(lines[1:4]) if len(lines) > 1 else "—"
+                title = lines[0] if lines else "-"
+                abstract = " ".join(lines[1:4]) if len(lines) > 1 else "-"
 
             results.append({
                 "rank":     idx,
-                "title":    title.strip() if title else "—",
-                "abstract": abstract.strip() if abstract else "—",
+                "title":    title.strip() if title else "-",
+                "abstract": abstract.strip() if abstract else "-",
                 "patent_id": patent_id,
                 "url":      url_href,
             })
 
-            _log(f"  [{idx:02d}] {patent_id} — {(title or '(no title)')[:60]}")
+            _log(f"  [{idx:02d}] {patent_id} - {(title or '(no title)')[:60]}")
 
         await browser.close()
 
@@ -217,7 +217,7 @@ def save_csv(results: list[dict], filepath: Path) -> None:
         writer = csv.DictWriter(f, fieldnames=fieldnames)
         writer.writeheader()
         writer.writerows(results)
-    print(f"[OK] CSV saved → {filepath}")
+    print(f"[OK] CSV saved -> {filepath}")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -386,7 +386,7 @@ def main():
     save_csv(results, csv_path)
     save_pdf(results, pdf_path, args.query)
 
-    print(f"\n✓ Done! Files written to: {out_dir.resolve()}")
+    print(f"\n[OK] Done! Files written to: {out_dir.resolve()}")
 
 
 if __name__ == "__main__":

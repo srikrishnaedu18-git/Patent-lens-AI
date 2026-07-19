@@ -52,10 +52,9 @@
               <path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/>
             </svg>
           </button>
-          <!-- Theme toggle FIRST, then Settings -->
           <button id="theme-toggle" class="btn-icon" aria-label="Toggle Theme">
             <svg id="theme-icon-sun" class="icon" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="5" stroke="currentColor" stroke-width="2"/><path d="M12 1V3M12 21V23M4.22 4.22L5.64 5.64M18.36 18.36L19.78 19.78M1 12H3M21 12H23M4.22 19.78L5.64 18.36M18.36 5.64L19.78 4.22" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
-            <svg id="theme-icon-moon" class="icon hidden" viewBox="0 0 24 24" fill="none"><path d="M21 12.79A9 9 0 1111.21 3 7 7 0 0021 12.79z" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            <svg id="theme-icon-moon" class="icon" viewBox="0 0 24 24" fill="none"><path d="M21 12.79A9 9 0 1111.21 3 7 7 0 0021 12.79z" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
           </button>
           <button id="btn-settings" class="btn-icon" aria-label="Pipeline Settings" title="Pipeline Settings">
             <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -98,11 +97,15 @@
 
             <!-- Manual keyword panel -->
             <div id="panel-manual" class="search-panel">
-              <p class="subtitle">Enter keywords separated by commas. Each keyword runs an independent scrape.</p>
+              <p class="subtitle">Enter keywords separated by commas. Each keyword runs an independent scrape. Add your invention description for richer AI audit analysis.</p>
               <form id="scrape-form-manual" class="scrape-form">
                 <div class="form-group flex-grow">
                   <label for="keywords-input">Keywords</label>
                   <input type="text" id="keywords-input" placeholder="e.g. smart irrigation, IoT soil sensor, crop water management" autocomplete="off">
+                </div>
+                <div class="form-group flex-grow">
+                  <label for="manual-description-input">Invention Description <span class="meta-text" style="text-transform:none; letter-spacing:0; font-weight:400;">(used for AI audit comparisons)</span></label>
+                  <textarea id="manual-description-input" rows="4" placeholder="Describe your invention in detail so the AI audit can compare each patent against your specific mechanism. E.g. 'A solar-powered drip irrigation controller using soil moisture sensors and IoT connectivity to dynamically regulate water flow...'"></textarea>
                 </div>
                 <div class="form-row">
                   <div class="form-group limit-group">
@@ -180,12 +183,17 @@
                 <span class="pulse-dot"></span>
                 Live Pipeline Log
               </div>
-              <div class="stage-pills" id="stage-pills">
-                <span class="stage-pill" id="pill-planning">Planning</span>
-                <span class="stage-pill" id="pill-scraping">Scraping</span>
-                <span class="stage-pill" id="pill-auditing">Auditing</span>
-                <span class="stage-pill" id="pill-saving">Saving</span>
-                <span class="stage-pill" id="pill-complete">Done</span>
+              <div style="display: flex; align-items: center; gap: 14px;">
+                <button type="button" id="btn-live-audit" class="btn-primary hidden" style="padding: 6px 14px; font-size: 0.8rem; border-radius: var(--radius-sm); border: none; font-weight: 700; height: 32px; background: var(--accent);">
+                  🤖 AI Audit Scraped
+                </button>
+                <div class="stage-pills" id="stage-pills">
+                  <span class="stage-pill" id="pill-planning">Planning</span>
+                  <span class="stage-pill" id="pill-scraping">Scraping</span>
+                  <button type="button" class="stage-pill" id="pill-auditing">Auditing</button>
+                  <span class="stage-pill" id="pill-saving">Saving</span>
+                  <span class="stage-pill" id="pill-complete">Done</span>
+                </div>
               </div>
             </div>
             <div id="live-log" class="live-log-box">
@@ -198,6 +206,37 @@
               </div>
               <div class="audit-progress-track">
                 <div id="audit-progress-bar" class="audit-progress-fill" style="width:0%"></div>
+              </div>
+            </div>
+
+            <!-- Novelty Audit Dashboard -->
+            <div id="novelty-results-panel" class="novelty-panel hidden">
+              <div class="novelty-panel-header" style="margin-bottom: 16px;">
+                <h3 style="font-size: 1.1rem; font-weight: 700;">Novelty &amp; Relevancy Audit Live-Dashboard</h3>
+                <span class="meta-text" style="font-size: 0.8rem; color: var(--text-secondary);">Real-time comparison of scraped patent abstracts against active keywords/description</span>
+              </div>
+              <div class="novelty-columns">
+                <div class="novelty-col novelty-col--red">
+                  <div class="novelty-col-title-bar">
+                    <span class="status-marker bg-danger"></span>
+                    Low Novelty / Direct Match (Red)
+                  </div>
+                  <div id="novelty-list-red" class="novelty-list-container"></div>
+                </div>
+                <div class="novelty-col novelty-col--yellow">
+                  <div class="novelty-col-title-bar">
+                    <span class="status-marker bg-warning"></span>
+                    Moderate Overlap (Yellow)
+                  </div>
+                  <div id="novelty-list-yellow" class="novelty-list-container"></div>
+                </div>
+                <div class="novelty-col novelty-col--green">
+                  <div class="novelty-col-title-bar">
+                    <span class="status-marker bg-success"></span>
+                    High Novelty (Green Gap)
+                  </div>
+                  <div id="novelty-list-green" class="novelty-list-container"></div>
+                </div>
               </div>
             </div>
           </div>
