@@ -1,0 +1,24 @@
+services:
+  - type: web
+    name: patentlens-studio
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    plan: starter          # upgrade to standard for more RAM/CPU
+    region: singapore      # change to your preferred region
+    envVars:
+      - key: ENV
+        value: production
+      - key: HOST
+        value: 0.0.0.0
+      - key: PORT
+        value: 10000        # Render uses port 10000 by default
+      - key: DB_PATH
+        value: /data/patent_lens.db   # Persistent disk mount path
+      - key: GEMINI_API_KEY
+        sync: false         # set manually in Render dashboard
+      - key: INDIA_PATENT_HEADLESS
+        value: "true"
+    disk:
+      name: patentlens-data
+      mountPath: /data
+      sizeGB: 1

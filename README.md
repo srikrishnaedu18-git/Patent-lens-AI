@@ -1,22 +1,25 @@
 # PatentLens Studio
 
-PatentLens Studio is a local FastAPI web app for running prior-art patent searches against Google Patents. It supports:
+PatentLens Studio is a multi-user FastAPI web app for running prior-art patent searches against Google Patents and Indian Patents. It features secure user authentication, isolated per-user project spaces, and an AI-powered search pipeline.
 
-- Project-based search history stored in SQLite
-- Manual keyword patent scraping from selectable sources
-- AI-assisted search query generation with Gemini
-- On-demand AI relevance audits for scraped patents
-- Live progress updates with Server-Sent Events
-- CSV and PDF export of patent results
+**Key capabilities:**
+- 🔐 Multi-user login with session-based auth and cookie persistence
+- 📁 Project-based search history stored in SQLite, scoped per user
+- 🔍 Manual keyword patent scraping from Google Patents and IP India
+- 🤖 AI-assisted search query generation with Gemini
+- ✅ On-demand AI relevance audits (Red / Yellow / Green scoring)
+- 📡 Live progress updates via Server-Sent Events (SSE)
+- 📄 CSV and PDF export of patent results
+
+---
 
 ## Requirements
 
-- Python 3.10 or newer
-- `pip`
-- Internet access for Google Patents scraping and Gemini API calls
-- A Gemini API key for AI query generation and AI audits
+- Python 3.11 or newer
+- Internet access for scraping and Gemini API calls
+- A Gemini API key (for AI features)
 
-The app uses Playwright for browser automation, so Chromium must be installed through Playwright after the Python packages are installed.
+---
 
 ## Project Structure
 
@@ -24,267 +27,184 @@ The app uses Playwright for browser automation, so Chromium must be installed th
 .
 ├── ai_agent.py          # Gemini query generation and relevance auditing
 ├── db.py                # SQLite schema, migrations, and database helpers
-├── scraper.py           # Google Patents scraper and optional CLI exporter
-├── server.py            # FastAPI app, API routes, exports, and static hosting
+├── scraper.py           # Google Patents / IP India scraper
+├── server.py            # FastAPI app, API routes, auth, exports, static hosting
 ├── requirements.txt     # Python dependencies
+├── Dockerfile           # Container image for deployment
+├── render.yaml          # Render.com deployment blueprint
 ├── .env.example         # Environment variable template
 └── static/
-    ├── index.html       # Web UI
-    ├── app.js           # Frontend behavior and API calls
+    ├── index.html       # Web UI (with glassmorphic auth overlay)
+    ├── app.js           # Frontend logic and auth flow
     └── style.css        # UI styles
 ```
 
-Runtime files such as `.env`, `venv/`, `__pycache__/`, and `patent_lens.db` are ignored by Git.
+---
 
-## Installation
-
-From the project root:
+## Local Installation
 
 ```bash
-cd "/home/krishna/Desktop/Code/Mini projects/patent lens 2 "
-```
+# Clone the repo and enter the project folder
+git clone <your-repo-url>
+cd patent-lens
 
-Create and activate a virtual environment:
-
-```bash
+# Create and activate a virtual environment
 python3 -m venv venv
-source venv/bin/activate
-```
+source venv/bin/activate        # Windows: venv\Scripts\activate
 
-Install the Python packages:
-
-```bash
+# Install Python packages
 pip install -r requirements.txt
-```
 
-Install Playwright's Chromium browser:
-
-```bash
+# Install Playwright's Chromium browser
 python -m playwright install chromium
+python -m playwright install-deps chromium   # Linux only
 ```
 
-On some Linux systems, Playwright may also need system browser dependencies:
-
-```bash
-python -m playwright install-deps chromium
-```
-
-If `install-deps` asks for administrator access, run it with the permissions your machine requires.
+---
 
 ## API Key Setup
-
-AI features require a Gemini API key. Manual keyword scraping can work without the key, but AI query generation and AI audits will fail until `GEMINI_API_KEY` is configured.
-
-1. Create a Gemini API key from Google AI Studio:
-
-   ```text
-   https://aistudio.google.com/app/apikey
-   ```
-
-2. Copy the environment template:
-
-   ```bash
-   cp .env.example .env
-   ```
-
-3. Open `.env` and replace the placeholder:
-
-   ```env
-   GEMINI_API_KEY=your_actual_gemini_api_key_here
-   INDIA_PATENTS_HEADFUL=0
-   ```
-
-4. Keep `.env` private. It is already listed in `.gitignore`, so it should not be committed.
-
-The backend loads this key in `ai_agent.py` with `python-dotenv`.
-
-`INDIA_PATENTS_HEADFUL` is optional. Set it to `1` if you want to use Indian Patent Search from IP India's public portal. That site requires CAPTCHA, so the scraper opens a visible browser and waits while you solve the CAPTCHA and submit the search.
-
-## Run the Web App
-
-Activate the virtual environment if it is not already active:
-
-```bash
-source venv/bin/activate
-```
-
-Start the FastAPI server:
-
-```bash
-python server.py
-```
-
-Open the app in your browser:
-
-```text
-http://127.0.0.1:8000
-```
-
-You can also run it with Uvicorn directly:
-
-```bash
-uvicorn server:app --host 127.0.0.1 --port 8000 --reload
-```
-
-The SQLite database is created automatically at startup as `patent_lens.db`.
-
-## Production & Docker Deployment
-
-The repository includes a `Dockerfile` configured to set up Python 3.10 and all Playwright system dependencies needed for Chromium browser automation.
-
-### Build and Run with Docker Locally
-
-1. Build the image:
-   ```bash
-   docker build -t patent-lens-studio .
-   ```
-
-2. Run the container:
-   ```bash
-   docker run -d \
-     -p 8000:8000 \
-     -e GEMINI_API_KEY="your_gemini_api_key_here" \
-     -e ENV="production" \
-     --name patent-lens \
-     patent-lens-studio
-   ```
-
-### Deploying to Cloud Providers
-
-The app can be deployed directly to container hosting platforms using the provided `Dockerfile`.
-
-* **Railway**: Connect your repository, add your variables (`GEMINI_API_KEY`, `ENV=production`), and generate a domain.
-* **Render**: Deploy as a Web Service with the `Docker` runtime and configure the environment variables in the dashboard.
-
-For detailed steps, refer to `deployment_guide.md`.
-
-## Using the App
-
-1. Create a project from the sidebar.
-2. Choose a search mode:
-   - Manual Search: enter comma-separated keywords and scrape Google Patents directly.
-   - AI Search: enter a product or invention requirement, let Gemini generate search queries and CPC codes, then confirm the search.
-3. Open Settings and choose search sources:
-   - Google Patents
-   - Indian Patents
-   - Both
-4. Review saved search runs in the project history.
-5. Run AI Audit on a saved search to score patents as Red, Yellow, Green, or Unaudited.
-6. Export all, selected, or filtered results as CSV or PDF.
-
-## Optional CLI Scraper
-
-`scraper.py` can be used without the web UI to scrape Google Patents and write local CSV/PDF files:
-
-```bash
-source venv/bin/activate
-python scraper.py --query "smart irrigation sensor IoT" --max 20
-```
-
-Choose a source:
-
-```bash
-python scraper.py --query "smart irrigation sensor IoT" --max 20 --source google
-python scraper.py --query "smart irrigation sensor IoT" --max 20 --source india
-python scraper.py --query "smart irrigation sensor IoT" --max 20 --source both
-```
-
-Custom output file base name:
-
-```bash
-python scraper.py --query "blockchain supply chain" --max 20 --out supply_chain_patents
-```
-
-This creates:
-
-```text
-supply_chain_patents.csv
-supply_chain_patents.pdf
-```
-
-## Important Files and Data
-
-- `.env`: local environment variables, including `GEMINI_API_KEY`
-- `.env.example`: safe template for environment setup
-- `patent_lens.db`: local SQLite database created by the app
-- `requirements.txt`: Python package list
-- `static/`: frontend files served by FastAPI
-
-To reset local app data, stop the server and delete `patent_lens.db`. A fresh database will be created the next time the server starts.
-
-## Troubleshooting
-
-### `GEMINI_API_KEY is not set`
-
-Create `.env` from `.env.example` and add your real Gemini key:
 
 ```bash
 cp .env.example .env
 ```
 
-Then edit:
+Open `.env` and fill in your values:
 
 ```env
 GEMINI_API_KEY=your_actual_gemini_api_key_here
 ```
 
-Restart the server after changing `.env`.
+The `.env` file is already in `.gitignore` — never commit it.
 
-### Playwright browser errors
+---
 
-Install Chromium for Playwright:
-
-```bash
-python -m playwright install chromium
-```
-
-If the browser launches but system libraries are missing, run:
+## Run Locally
 
 ```bash
-python -m playwright install-deps chromium
+source venv/bin/activate
+python server.py
 ```
 
-### Port 8000 is already in use
+Open **http://127.0.0.1:8000** in your browser.
 
-Run the app on a different port:
+The first time you open the app you'll see a login screen. Register an account, and your projects will be fully isolated to that account.
+
+The SQLite database (`patent_lens.db`) is created automatically on first startup.
+
+---
+
+## Deploying to Render
+
+This project includes a `render.yaml` blueprint and `Dockerfile` for one-click deployment to [Render](https://render.com).
+
+### Steps
+
+1. **Push to GitHub**
+   ```bash
+   git remote add origin https://github.com/your-username/patent-lens.git
+   git push -u origin main
+   ```
+
+2. **Create a new Web Service on Render**
+   - Go to [render.com](https://render.com) → New → Web Service
+   - Connect your GitHub repository
+   - Render will auto-detect the `Dockerfile`
+
+3. **Set Environment Variables** in the Render dashboard:
+   | Variable | Value |
+   |---|---|
+   | `GEMINI_API_KEY` | your Gemini API key |
+   | `ENV` | `production` |
+   | `HOST` | `0.0.0.0` |
+   | `PORT` | `10000` |
+   | `DB_PATH` | `/data/patent_lens.db` |
+   | `INDIA_PATENT_HEADLESS` | `true` |
+
+4. **Add a Persistent Disk** (required for SQLite):
+   - In the Render service settings → Disks → Add Disk
+   - Mount Path: `/data`
+   - Size: 1 GB (free tier supports this)
+
+5. **Deploy** — Render will build the Docker image and launch the service.
+
+> ⚠️ **Important:** Without a persistent disk, the SQLite database will be wiped on every redeploy. Always configure the disk.
+
+### Docker Local Test
 
 ```bash
-uvicorn server:app --host 127.0.0.1 --port 8001 --reload
+docker build -t patent-lens-studio .
+docker run -d \
+  -p 8000:8000 \
+  -e GEMINI_API_KEY="your_key_here" \
+  -e ENV="production" \
+  -v $(pwd)/data:/data \
+  -e DB_PATH="/data/patent_lens.db" \
+  --name patent-lens \
+  patent-lens-studio
 ```
 
-Then open:
+---
 
-```text
-http://127.0.0.1:8001
-```
+## Authentication
 
-### Google Patents returns no results
+PatentLens Studio uses server-side session cookies:
 
-Try a smaller `max_results` value, simpler keywords, or more specific technical terms. Google Patents can also rate-limit or change page markup, which may temporarily affect scraping.
+- **Register** a new account from the login overlay on first visit
+- **Session cookies** are valid for 1 year — you stay logged in across browser restarts
+- **Logout** using the sign-out button in the sidebar footer
+- Each user's **projects, searches, and patents are fully isolated**
 
-### Indian Patent Search requires CAPTCHA
+Default accounts (pre-seeded on local install):
+| Username | Password |
+|---|---|
+| Sri | `123456` |
 
-Set this in `.env`:
+---
 
-```env
-INDIA_PATENTS_HEADFUL=1
-```
+## Using the App
 
-Restart the server. When an Indian Patents scrape starts, a visible browser opens. Solve the CAPTCHA in that browser and click Search; the scraper will continue after the results table loads.
+1. Register or log in at the auth overlay
+2. Create a project from the sidebar
+3. Choose a search mode:
+   - **Manual Search** — enter comma-separated keywords
+   - **AI Search** — describe your invention, let Gemini generate queries
+4. Review saved search runs in the project history
+5. Run **AI Audit** on a search to score patents Red / Yellow / Green
+6. Export results as **CSV** or **PDF**
 
-### PDF export fails
+---
 
-Make sure `fpdf2` is installed:
+## Optional CLI Scraper
 
 ```bash
-pip install -r requirements.txt
+python scraper.py --query "smart irrigation sensor IoT" --max 20 --source google
+python scraper.py --query "blockchain supply chain" --max 20 --out results
 ```
 
-Then restart the server.
+---
+
+## Troubleshooting
+
+| Problem | Fix |
+|---|---|
+| `Address already in use` | Stop the running server or use a different port: `PORT=8001 python server.py` |
+| `GEMINI_API_KEY is not set` | Copy `.env.example` → `.env` and fill in the key |
+| Playwright browser errors | Run `python -m playwright install chromium && python -m playwright install-deps chromium` |
+| PDF export fails | Run `pip install -r requirements.txt` and restart |
+| Login loop on Render | Make sure `DB_PATH` points to the persistent disk and the disk is attached |
+
+---
 
 ## API Overview
 
-The frontend uses these main endpoints:
+All API routes require authentication (session cookie). Auth endpoints:
+
+- `POST /api/auth/register`
+- `POST /api/auth/login`
+- `POST /api/auth/logout`
+- `GET /api/auth/me`
+
+Core endpoints (scoped to logged-in user):
 
 - `GET /api/projects`
 - `POST /api/projects`
@@ -297,11 +217,4 @@ The frontend uses these main endpoints:
 - `GET /api/ai/stream/{task_id}`
 - `POST /api/projects/{project_id}/export/csv`
 - `POST /api/projects/{project_id}/export/pdf`
-
-## Development Notes
-
-- The app is intentionally local-first. It stores data in SQLite beside the source files.
-- `server.py` mounts `static/` at `/`, so the web UI and API are served by the same FastAPI process.
-- Database schema creation and simple migrations run automatically through `init_db()` when the server starts.
-- Patent records are normalized to `source`, `patent_id`, `title`, `abstract`, and `url` regardless of source.
-- AI calls use Gemini structured output through the `google-genai` package.
+- `POST /api/history/delete`

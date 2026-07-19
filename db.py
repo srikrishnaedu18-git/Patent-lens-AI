@@ -6,9 +6,11 @@ import secrets
 from pathlib import Path
 from datetime import datetime
 
+import os
+
 logger = logging.getLogger("db")
 
-DB_PATH = Path(__file__).parent / "patent_lens.db"
+DB_PATH = Path(os.environ.get("DB_PATH", str(Path(__file__).parent / "patent_lens.db")))
 
 def get_db_connection():
     conn = sqlite3.connect(DB_PATH)

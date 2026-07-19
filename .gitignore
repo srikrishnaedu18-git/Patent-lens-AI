@@ -9,8 +9,14 @@ env/
 
 # Database
 patent_lens.db
+patent_lens.db-shm
+patent_lens.db-wal
 
 # OS / IDE
 .DS_Store
 .vscode/
 .idea/
+workspace.code-workspace
+
+# Sample/test files
+sample captcha india patent/
