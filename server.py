@@ -20,7 +20,7 @@ from dotenv import load_dotenv
 load_dotenv(override=True)
 
 from contextlib import asynccontextmanager
-from fastapi import FastAPI, HTTPException, BackgroundTasks, Response
+from fastapi import FastAPI, HTTPException, BackgroundTasks, Response, Cookie, Depends
 from fastapi.responses import StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
@@ -30,6 +30,8 @@ from db import (
     create_search, save_patents, get_project_data, get_search_results,
     get_patents_by_ids, get_all_project_patents, update_patent_audit,
     get_db_connection,
+    register_user, verify_user, create_session, get_user_id_by_session, delete_session,
+    verify_project_ownership, verify_search_ownership, verify_patent_ownership
 )
 from scraper import get_india_options_from_env, normalize_india_options, normalize_sources, scrape_patents
 
@@ -61,6 +63,89 @@ async def lifespan(app: FastAPI):
 
 # ── App setup ─────────────────────────────────────────────────────────────────
 app = FastAPI(title="PatentLens Studio API", lifespan=lifespan)
+
+# ── Auth Dependency & Models ──────────────────────────────────────────────────
+class UserAuth(BaseModel):
+    username: str = Field(..., min_length=1)
+    password: str = Field(..., min_length=1)
+
+def get_current_user_id(session_token: str = Cookie(None)):
+    if not session_token:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    user_id = get_user_id_by_session(session_token)
+    if not user_id:
+        raise HTTPException(status_code=401, detail="Session expired or invalid")
+    return user_id
+
+@app.post("/api/auth/register")
+def auth_register(user: UserAuth, response: Response):
+    username = user.username.strip()
+    password = user.password.strip()
+    if not username or not password:
+        raise HTTPException(status_code=400, detail="Username and password cannot be empty")
+    try:
+        user_id = register_user(username, password)
+        session_token = create_session(user_id)
+        response.set_cookie(
+            key="session_token",
+            value=session_token,
+            max_age=31536000,
+            httponly=True,
+            samesite="lax",
+            secure=False
+        )
+        return {"status": "success", "username": username}
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.error("[Auth] register error: %s", e, exc_info=True)
+        raise HTTPException(status_code=500, detail="Registration failed")
+
+@app.post("/api/auth/login")
+def auth_login(user: UserAuth, response: Response):
+    username = user.username.strip()
+    password = user.password.strip()
+    user_data = verify_user(username, password)
+    if not user_data:
+        raise HTTPException(status_code=401, detail="Invalid username or password")
+    
+    try:
+        session_token = create_session(user_data["id"])
+        response.set_cookie(
+            key="session_token",
+            value=session_token,
+            max_age=31536000,
+            httponly=True,
+            samesite="lax",
+            secure=False
+        )
+        return {"status": "success", "username": user_data["username"]}
+    except Exception as e:
+        logger.error("[Auth] login error: %s", e, exc_info=True)
+        raise HTTPException(status_code=500, detail="Login failed")
+
+@app.post("/api/auth/logout")
+def auth_logout(response: Response, session_token: str = Cookie(None)):
+    if session_token:
+        delete_session(session_token)
+    response.delete_cookie(key="session_token")
+    return {"status": "success", "message": "Logged out"}
+
+@app.get("/api/auth/me")
+def auth_me(session_token: str = Cookie(None)):
+    user_id = get_user_id_by_session(session_token)
+    if not user_id:
+        return {"authenticated": False}
+    
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT username FROM users WHERE id = ?;", (user_id,))
+    row = cursor.fetchone()
+    conn.close()
+    
+    if not row:
+        return {"authenticated": False}
+    return {"authenticated": True, "username": row["username"]}
 
 # ── In-memory task store (task_id -> asyncio.Queue) ───────────────────────────
 _task_queues: dict[str, asyncio.Queue] = {}
@@ -717,40 +802,46 @@ async def _audit_pipeline(search_id: int, requirement: str, task_id: str):
 # ── API Endpoints — Projects ──────────────────────────────────────────────────
 
 @app.get("/api/projects")
-def list_projects():
+def list_projects(user_id: int = Depends(get_current_user_id)):
     try:
-        return get_projects()
+        return get_projects(user_id)
     except Exception as e:
         logger.error("[API] list_projects: %s", e, exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/api/projects")
-def add_project(project: ProjectCreate):
+def add_project(project: ProjectCreate, user_id: int = Depends(get_current_user_id)):
     name = project.name.strip()
     if not name:
         raise HTTPException(status_code=400, detail="Project name cannot be empty")
     try:
-        created = create_project(name)
+        created = create_project(name, user_id)
         if not created:
             raise HTTPException(status_code=500, detail="Could not create project")
         return created
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         logger.error("[API] add_project: %s", e, exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.delete("/api/projects/{project_id}")
-def remove_project(project_id: int):
+def remove_project(project_id: int, user_id: int = Depends(get_current_user_id)):
     try:
-        delete_project(project_id)
+        delete_project(project_id, user_id)
         return {"status": "success", "message": f"Project {project_id} deleted."}
+    except PermissionError:
+        raise HTTPException(status_code=403, detail="Access denied")
     except Exception as e:
         logger.error("[API] remove_project %d: %s", project_id, e, exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/api/projects/{project_id}/data")
-def fetch_project_data(project_id: int):
+def fetch_project_data(project_id: int, user_id: int = Depends(get_current_user_id)):
     try:
-        return get_project_data(project_id)
+        return get_project_data(project_id, user_id)
+    except PermissionError:
+        raise HTTPException(status_code=403, detail="Access denied")
     except Exception as e:
         logger.error("[API] fetch_project_data %d: %s", project_id, e, exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
@@ -767,9 +858,11 @@ def get_settings_defaults():
 # ── API Endpoints — Manual Scrape ─────────────────────────────────────────────
 
 @app.post("/api/scrape")
-async def trigger_manual_scrape(req: ManualScrapeRequest, background_tasks: BackgroundTasks):
+async def trigger_manual_scrape(req: ManualScrapeRequest, background_tasks: BackgroundTasks, user_id: int = Depends(get_current_user_id)):
     """Keyword scrape — starts a background task so CAPTCHA can be handled via SSE."""
     project_id = req.project_id
+    if not verify_project_ownership(project_id, user_id):
+        raise HTTPException(status_code=403, detail="Access denied")
     raw_keywords = req.keywords.strip()
     max_results = req.max_results
     sources = normalize_sources(req.sources)
@@ -801,7 +894,7 @@ async def trigger_manual_scrape(req: ManualScrapeRequest, background_tasks: Back
 # ── API Endpoints — AI Pipeline ───────────────────────────────────────────────
 
 @app.post("/api/ai/generate-queries")
-async def generate_queries(req: GenerateQueriesRequest):
+async def generate_queries(req: GenerateQueriesRequest, user_id: int = Depends(get_current_user_id)):
     """Step 1 of AI flow: generate search queries from requirement."""
     requirement = req.requirement.strip()
     if not requirement:
@@ -827,8 +920,10 @@ async def generate_queries(req: GenerateQueriesRequest):
 
 
 @app.post("/api/ai/confirm-search")
-async def confirm_ai_search(req: ConfirmAISearchRequest, background_tasks: BackgroundTasks):
+async def confirm_ai_search(req: ConfirmAISearchRequest, background_tasks: BackgroundTasks, user_id: int = Depends(get_current_user_id)):
     """Step 2: confirms queries, starts scrape-only background pipeline."""
+    if not verify_project_ownership(req.project_id, user_id):
+        raise HTTPException(status_code=403, detail="Access denied")
     if not req.queries:
         raise HTTPException(status_code=400, detail="No queries provided")
     sources = normalize_sources(req.sources)
@@ -858,7 +953,7 @@ async def confirm_ai_search(req: ConfirmAISearchRequest, background_tasks: Backg
 
 
 @app.post("/api/captcha/{task_id}")
-async def submit_captcha(task_id: str, req: CaptchaAnswerRequest):
+async def submit_captcha(task_id: str, req: CaptchaAnswerRequest, user_id: int = Depends(get_current_user_id)):
     future = _captcha_futures.get(task_id)
     if not future or future.done():
         raise HTTPException(status_code=404, detail="No active CAPTCHA challenge for this task")
@@ -870,7 +965,7 @@ async def submit_captcha(task_id: str, req: CaptchaAnswerRequest):
 
 
 @app.post("/api/scrape/cancel/{task_id}")
-async def cancel_scrape(task_id: str):
+async def cancel_scrape(task_id: str, user_id: int = Depends(get_current_user_id)):
     """Signal the manual pipeline to stop after the current keyword finishes."""
     if task_id not in _task_queues:
         raise HTTPException(status_code=404, detail="Task not found or already finished")
@@ -880,8 +975,10 @@ async def cancel_scrape(task_id: str):
 
 
 @app.post("/api/ai/audit/{search_id}")
-async def trigger_audit(search_id: int, req: AuditRequest, background_tasks: BackgroundTasks):
+async def trigger_audit(search_id: int, req: AuditRequest, background_tasks: BackgroundTasks, user_id: int = Depends(get_current_user_id)):
     """On-demand: start the AI relevance audit for a specific search run."""
+    if not verify_search_ownership(search_id, user_id):
+        raise HTTPException(status_code=403, detail="Access denied")
     task_id = str(uuid.uuid4())
     queue: asyncio.Queue = asyncio.Queue()
     _task_queues[task_id] = queue
@@ -898,7 +995,7 @@ async def trigger_audit(search_id: int, req: AuditRequest, background_tasks: Bac
 
 
 @app.get("/api/ai/stream/{task_id}")
-async def stream_task(task_id: str):
+async def stream_task(task_id: str, user_id: int = Depends(get_current_user_id)):
     """SSE endpoint — client connects here to receive live pipeline progress."""
     if task_id not in _task_queues:
         raise HTTPException(status_code=404, detail="Task not found or already completed")
@@ -938,8 +1035,17 @@ class DeleteHistoryRequest(BaseModel):
     patent_ids: list[int] = []
 
 @app.post("/api/history/delete")
-def delete_history(req: DeleteHistoryRequest):
+def delete_history(req: DeleteHistoryRequest, user_id: int = Depends(get_current_user_id)):
     try:
+        # Verify ownership of all patent_ids
+        for pid in req.patent_ids:
+            if not verify_patent_ownership(pid, user_id):
+                raise HTTPException(status_code=403, detail="Access denied")
+        # Verify ownership of all search_ids
+        for sid in req.search_ids:
+            if not verify_search_ownership(sid, user_id):
+                raise HTTPException(status_code=403, detail="Access denied")
+
         conn = get_db_connection()
         cursor = conn.cursor()
         # Delete individual patents if any
@@ -953,6 +1059,8 @@ def delete_history(req: DeleteHistoryRequest):
         conn.commit()
         conn.close()
         return {"status": "success", "message": "Selected items deleted successfully."}
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error("[API] Failed to delete history: %s", e)
         raise HTTPException(status_code=500, detail=str(e))
@@ -961,9 +1069,11 @@ def delete_history(req: DeleteHistoryRequest):
 # ── Export Endpoints ──────────────────────────────────────────────────────────
 
 @app.post("/api/projects/{project_id}/export/csv")
-def export_project_csv(project_id: int, req: ExportRequest = None):
+def export_project_csv(project_id: int, req: ExportRequest = None, user_id: int = Depends(get_current_user_id)):
+    if not verify_project_ownership(project_id, user_id):
+        raise HTTPException(status_code=403, detail="Access denied")
     req = req or ExportRequest()
-    patents = get_patents_by_ids(req.patent_ids) if req.patent_ids else get_all_project_patents(project_id)
+    patents = get_patents_by_ids(req.patent_ids, user_id) if req.patent_ids else get_all_project_patents(project_id, user_id)
     if not patents:
         raise HTTPException(status_code=404, detail="No patents found to export")
 
@@ -992,9 +1102,11 @@ def export_project_csv(project_id: int, req: ExportRequest = None):
 
 
 @app.post("/api/projects/{project_id}/export/pdf")
-def export_project_pdf(project_id: int, req: ExportRequest = None):
+def export_project_pdf(project_id: int, req: ExportRequest = None, user_id: int = Depends(get_current_user_id)):
+    if not verify_project_ownership(project_id, user_id):
+        raise HTTPException(status_code=403, detail="Access denied")
     req = req or ExportRequest()
-    patents = get_patents_by_ids(req.patent_ids) if req.patent_ids else get_all_project_patents(project_id)
+    patents = get_patents_by_ids(req.patent_ids, user_id) if req.patent_ids else get_all_project_patents(project_id, user_id)
     if not patents:
         raise HTTPException(status_code=404, detail="No patents found to export")
 

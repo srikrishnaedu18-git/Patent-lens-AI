@@ -1,3 +1,22 @@
+// Intercept 401 Unauthorized globally
+const originalFetch = window.fetch;
+window.fetch = async (...args) => {
+  const url = typeof args[0] === 'string' ? args[0] : (args[0] && args[0].url) || "";
+  const response = await originalFetch(...args);
+  if (response.status === 401 && !url.includes('/api/auth/')) {
+    document.getElementById("auth-overlay").classList.remove("hidden");
+    state.projects = [];
+    state.activeProjectId = null;
+    if (typeof renderProjects === "function") renderProjects();
+    const projectPanel = document.getElementById("project-panel");
+    const emptyState = document.getElementById("empty-state");
+    if (projectPanel) projectPanel.classList.add("hidden");
+    if (emptyState) emptyState.classList.remove("hidden");
+    throw new Error("Unauthorized");
+  }
+  return response;
+};
+
 // ── Application State ────────────────────────────────────────────────────────
 let state = {
   projects: [],
@@ -178,7 +197,8 @@ document.addEventListener("DOMContentLoaded", () => {
   initTheme();
   initSearchSources();
   initIndiaOptions();
-  loadProjects();
+  initAuth();
+  checkAuth();
   setupEventListeners();
 });
 
@@ -196,6 +216,123 @@ function setTheme(theme) {
 
 function toggleTheme() {
   setTheme(state.theme === "dark" ? "light" : "dark");
+}
+
+// ── Authentication Management ────────────────────────────────────────────────
+let authMode = "login"; // "login" | "register"
+
+function checkAuth() {
+  // Use originalFetch directly so we don't trigger the interceptor's redirect loop
+  originalFetch("/api/auth/me")
+    .then(res => {
+      if (res.status === 200) {
+        return res.json();
+      } else {
+        throw new Error("Not logged in");
+      }
+    })
+    .then(data => {
+      // Logged in
+      document.getElementById("user-display-name").textContent = data.username;
+      document.getElementById("auth-overlay").classList.add("hidden");
+      loadProjects();
+    })
+    .catch(() => {
+      // Show auth overlay
+      document.getElementById("auth-overlay").classList.remove("hidden");
+    });
+}
+
+function initAuth() {
+  const overlay = document.getElementById("auth-overlay");
+  const form = document.getElementById("auth-form");
+  const toggleBtn = document.getElementById("btn-auth-toggle");
+  const title = document.getElementById("auth-title");
+  const subtitle = document.getElementById("auth-subtitle");
+  const submitBtn = document.getElementById("btn-auth-submit");
+  const errorMsg = document.getElementById("auth-error-msg");
+  const toggleText = document.getElementById("auth-toggle-text");
+  
+  toggleBtn.addEventListener("click", (e) => {
+    e.preventDefault();
+    errorMsg.classList.add("hidden");
+    if (authMode === "login") {
+      authMode = "register";
+      title.textContent = "Create Account";
+      subtitle.textContent = "Join PatentLens Studio to manage your projects";
+      submitBtn.textContent = "Create Account";
+      toggleText.textContent = "Already have an account?";
+      toggleBtn.textContent = "Sign In";
+    } else {
+      authMode = "login";
+      title.textContent = "Welcome Back";
+      subtitle.textContent = "Please enter your details to sign in";
+      submitBtn.textContent = "Sign In";
+      toggleText.textContent = "Don't have an account?";
+      toggleBtn.textContent = "Create an account";
+    }
+  });
+  
+  form.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    errorMsg.classList.add("hidden");
+    submitBtn.disabled = true;
+    
+    const username = document.getElementById("auth-username").value.trim();
+    const password = document.getElementById("auth-password").value;
+    
+    const url = authMode === "login" ? "/api/auth/login" : "/api/auth/register";
+    try {
+      // Use originalFetch here too to prevent handling 401 via general interceptor
+      const res = await originalFetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ username, password })
+      });
+      
+      if (!res.ok) {
+        const data = await res.json();
+        throw new Error(data.detail || "Authentication failed");
+      }
+      
+      const data = await res.json();
+      document.getElementById("user-display-name").textContent = data.username;
+      overlay.classList.add("hidden");
+      
+      // Clear inputs
+      document.getElementById("auth-username").value = "";
+      document.getElementById("auth-password").value = "";
+      
+      // Load dashboard data
+      loadProjects();
+    } catch (err) {
+      errorMsg.textContent = err.message;
+      errorMsg.classList.remove("hidden");
+    } finally {
+      submitBtn.disabled = false;
+    }
+  });
+
+  // Logout button event listener
+  const logoutBtn = document.getElementById("btn-logout");
+  if (logoutBtn) {
+    logoutBtn.addEventListener("click", async () => {
+      try {
+        await originalFetch("/api/auth/logout", { method: "POST" });
+      } catch (err) {
+        console.error("Logout error", err);
+      }
+      // Show auth overlay, clear state
+      overlay.classList.remove("hidden");
+      state.projects = [];
+      state.activeProjectId = null;
+      if (typeof renderProjects === "function") renderProjects();
+      const projectPanel = document.getElementById("project-panel");
+      const emptyState = document.getElementById("empty-state");
+      if (projectPanel) projectPanel.classList.add("hidden");
+      if (emptyState) emptyState.classList.remove("hidden");
+    });
+  }
 }
 
 function initSearchSources() {

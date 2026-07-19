@@ -11,6 +11,39 @@
   <link rel="stylesheet" href="style.css?v=2">
 </head>
 <body>
+  <!-- Auth Overlay -->
+  <div id="auth-overlay" class="auth-overlay">
+    <div class="auth-card">
+      <div class="auth-header">
+        <svg class="logo-icon" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <path d="M12 22C17.5228 22 22 17.5228 22 12C22 6.47715 17.5228 2 12 2C6.47715 2 2 6.47715 2 12C2 17.5228 6.47715 22 12 22Z" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+          <path d="M12 6V12L16 14" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>
+        <span class="logo-text">PatentLens <span class="logo-badge">Studio</span></span>
+      </div>
+      <h2 id="auth-title">Welcome Back</h2>
+      <p id="auth-subtitle">Please enter your details to sign in</p>
+      
+      <form id="auth-form" class="auth-form">
+        <div class="input-group">
+          <label for="auth-username">Username</label>
+          <input type="text" id="auth-username" required placeholder="Enter username">
+        </div>
+        <div class="input-group">
+          <label for="auth-password">Password</label>
+          <input type="password" id="auth-password" required placeholder="••••••••">
+        </div>
+        <div id="auth-error-msg" class="auth-error-msg hidden"></div>
+        <button type="submit" id="btn-auth-submit" class="btn-primary auth-submit">Sign In</button>
+      </form>
+      
+      <div class="auth-footer">
+        <span id="auth-toggle-text">Don't have an account?</span>
+        <button id="btn-auth-toggle" class="btn-link">Create an account</button>
+      </div>
+    </div>
+  </div>
+
   <div class="app-container">
 
     <!-- Sidebar -->
@@ -34,6 +67,14 @@
         <ul id="projects-list" class="projects-list"></ul>
       </div>
       <div class="sidebar-footer">
+        <div id="user-profile-section" class="user-profile-section">
+          <span id="user-display-name" class="user-display-name">Username</span>
+          <button id="btn-logout" class="btn-logout" title="Sign Out" aria-label="Sign Out">
+            <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9"/>
+            </svg>
+          </button>
+        </div>
         <span class="footer-meta">v3.0 • AI-Powered</span>
       </div>
     </aside>

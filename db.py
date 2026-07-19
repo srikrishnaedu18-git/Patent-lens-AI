@@ -1,6 +1,8 @@
 import sqlite3
 import json
 import logging
+import hashlib
+import secrets
 from pathlib import Path
 from datetime import datetime
 
@@ -25,11 +27,33 @@ def init_db():
     
     # ── Core tables ──────────────────────────────────────────────────────────
 
+    # Users table
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS users (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        username TEXT UNIQUE NOT NULL,
+        password_hash TEXT NOT NULL,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    );
+    """)
+
+    # Sessions table for user persistent login
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS sessions (
+        id TEXT PRIMARY KEY,
+        user_id INTEGER NOT NULL,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+    );
+    """)
+
     cursor.execute("""
     CREATE TABLE IF NOT EXISTS projects (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER,
         name TEXT UNIQUE NOT NULL,
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
     );
     """)
     
@@ -72,6 +96,7 @@ def init_db():
     # Each ALTER TABLE is wrapped in try/except — silently skipped if column exists.
 
     migrations = [
+        ("projects", "user_id", "INTEGER REFERENCES users(id) ON DELETE CASCADE"),
         ("searches", "search_mode",  "TEXT DEFAULT 'manual'"),
         ("searches", "ai_queries",   "TEXT"),
         ("searches", "ai_cpc_codes", "TEXT"),
@@ -98,47 +123,155 @@ def init_db():
     logger.info("[DB] Database initialised at: %s", DB_PATH)
 
 
-# ── Project CRUD ──────────────────────────────────────────────────────────────
+# ── User Authentication Helpers ──────────────────────────────────────────────
 
-def get_projects():
+def hash_password(password: str) -> str:
+    return hashlib.sha256(password.encode()).hexdigest()
+
+def register_user(username: str, password: str) -> int:
     conn = get_db_connection()
     cursor = conn.cursor()
-    cursor.execute("SELECT * FROM projects ORDER BY created_at DESC;")
+    try:
+        pwd_hash = hash_password(password)
+        cursor.execute("INSERT INTO users (username, password_hash) VALUES (?, ?);", (username, pwd_hash))
+        conn.commit()
+        user_id = cursor.lastrowid
+        logger.info("[DB] Registered user: id=%d username='%s'", user_id, username)
+        return user_id
+    except sqlite3.IntegrityError:
+        raise ValueError("Username already exists")
+    finally:
+        conn.close()
+
+def verify_user(username: str, password: str) -> dict:
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    pwd_hash = hash_password(password)
+    cursor.execute("SELECT id, username FROM users WHERE username = ? AND password_hash = ?;", (username, pwd_hash))
+    row = cursor.fetchone()
+    conn.close()
+    return dict(row) if row else None
+
+def create_session(user_id: int) -> str:
+    session_id = secrets.token_hex(32)
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    try:
+        cursor.execute("INSERT INTO sessions (id, user_id) VALUES (?, ?);", (session_id, user_id))
+        conn.commit()
+        return session_id
+    finally:
+        conn.close()
+
+def get_user_id_by_session(session_id: str) -> int:
+    if not session_id:
+        return None
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT user_id FROM sessions WHERE id = ?;", (session_id,))
+    row = cursor.fetchone()
+    conn.close()
+    return row["user_id"] if row else None
+
+def delete_session(session_id: str):
+    if not session_id:
+        return
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("DELETE FROM sessions WHERE id = ?;", (session_id,))
+    conn.commit()
+    conn.close()
+
+
+# ── Ownership Verifications ──────────────────────────────────────────────────
+
+def verify_project_ownership(project_id: int, user_id: int) -> bool:
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT 1 FROM projects WHERE id = ? AND user_id = ?;", (project_id, user_id))
+    row = cursor.fetchone()
+    conn.close()
+    return row is not None
+
+def verify_search_ownership(search_id: int, user_id: int) -> bool:
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        """
+        SELECT 1 FROM searches s
+        JOIN projects p ON s.project_id = p.id
+        WHERE s.id = ? AND p.user_id = ?;
+        """,
+        (search_id, user_id),
+    )
+    row = cursor.fetchone()
+    conn.close()
+    return row is not None
+
+def verify_patent_ownership(patent_id: int, user_id: int) -> bool:
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        """
+        SELECT 1 FROM patents p
+        JOIN searches s ON p.search_id = s.id
+        JOIN projects pr ON s.project_id = pr.id
+        WHERE p.id = ? AND pr.user_id = ?;
+        """,
+        (patent_id, user_id),
+    )
+    row = cursor.fetchone()
+    conn.close()
+    return row is not None
+
+
+# ── Project CRUD ──────────────────────────────────────────────────────────────
+
+def get_projects(user_id: int):
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT * FROM projects WHERE user_id = ? ORDER BY created_at DESC;", (user_id,))
     rows = cursor.fetchall()
     projects = [dict(row) for row in rows]
     conn.close()
     return projects
 
-def create_project(name: str):
+def create_project(name: str, user_id: int):
     conn = get_db_connection()
     cursor = conn.cursor()
     try:
-        cursor.execute("INSERT INTO projects (name) VALUES (?);", (name,))
+        cursor.execute("INSERT INTO projects (name, user_id) VALUES (?, ?);", (name, user_id))
         conn.commit()
         project_id = cursor.lastrowid
         cursor.execute("SELECT * FROM projects WHERE id = ?;", (project_id,))
         project = dict(cursor.fetchone())
-        logger.info("[DB] Created project: id=%d name='%s'", project_id, name)
+        logger.info("[DB] Created project: id=%d name='%s' for user_id=%d", project_id, name, user_id)
         return project
     except sqlite3.IntegrityError:
-        # Project already exists — return it
-        cursor.execute("SELECT * FROM projects WHERE name = ?;", (name,))
+        # Check if this user owns a project with this name
+        cursor.execute("SELECT * FROM projects WHERE name = ? AND user_id = ?;", (name, user_id))
         row = cursor.fetchone()
-        logger.warning("[DB] Project name '%s' already exists — returning existing.", name)
-        return dict(row) if row else None
+        if row:
+            logger.warning("[DB] Project name '%s' already exists for user=%d — returning existing.", name, user_id)
+            return dict(row)
+        else:
+            logger.warning("[DB] Project name '%s' is already taken by another user.", name)
+            raise ValueError("Project name is already taken by another user.")
     except Exception as e:
         logger.error("[DB] create_project failed: %s", e, exc_info=True)
         raise
     finally:
         conn.close()
 
-def delete_project(project_id: int):
+def delete_project(project_id: int, user_id: int):
+    if not verify_project_ownership(project_id, user_id):
+        raise PermissionError("Access denied")
     conn = get_db_connection()
     cursor = conn.cursor()
     cursor.execute("DELETE FROM projects WHERE id = ?;", (project_id,))
     conn.commit()
     conn.close()
-    logger.info("[DB] Deleted project id=%d (cascade applied)", project_id)
+    logger.info("[DB] Deleted project id=%d for user_id=%d (cascade applied)", project_id, user_id)
 
 
 # ── Search & Patent CRUD ──────────────────────────────────────────────────────
@@ -150,22 +283,10 @@ def create_search(
     ai_queries: list = None,
     ai_cpc_codes: list = None,
     ai_rationale: str = None,
+    user_id: int = None,
 ) -> int:
-    """
-    Create a search record.
-
-    Args:
-        project_id:   Parent project.
-        query:        Human-readable label (the requirement text for AI mode,
-                      or the keyword string for manual mode).
-        search_mode:  'manual' or 'ai'
-        ai_queries:   List of LLM-generated query strings (AI mode only).
-        ai_cpc_codes: List of LLM-suggested CPC codes (AI mode only).
-        ai_rationale: LLM search rationale text (AI mode only).
-
-    Returns:
-        The new search row id.
-    """
+    if user_id is not None and not verify_project_ownership(project_id, user_id):
+        raise PermissionError("Access denied")
     conn = get_db_connection()
     cursor = conn.cursor()
     try:
@@ -197,15 +318,9 @@ def create_search(
     finally:
         conn.close()
 
-def save_patents(search_id: int, patents: list[dict]):
-    """
-    Persist a list of scraped (and optionally AI-audited) patents.
-
-    Each patent dict should have keys:
-      patent_id, title, abstract, url
-    Optionally:
-      source (str), confidence_score (float), ai_reasoning (str)
-    """
+def save_patents(search_id: int, patents: list[dict], user_id: int = None):
+    if user_id is not None and not verify_search_ownership(search_id, user_id):
+        raise PermissionError("Access denied")
     conn = get_db_connection()
     cursor = conn.cursor()
     try:
@@ -235,11 +350,9 @@ def save_patents(search_id: int, patents: list[dict]):
     finally:
         conn.close()
 
-def get_project_data(project_id: int) -> list[dict]:
-    """
-    Returns all searches for a project, with their nested patents.
-    Deserialises JSON-stored AI fields back into Python lists.
-    """
+def get_project_data(project_id: int, user_id: int) -> list[dict]:
+    if not verify_project_ownership(project_id, user_id):
+        raise PermissionError("Access denied")
     conn = get_db_connection()
     cursor = conn.cursor()
     
@@ -264,8 +377,9 @@ def get_project_data(project_id: int) -> list[dict]:
     conn.close()
     return searches
 
-def get_search_results(search_id: int) -> dict:
-    """Returns a single search run with its patents."""
+def get_search_results(search_id: int, user_id: int) -> dict:
+    if not verify_search_ownership(search_id, user_id):
+        raise PermissionError("Access denied")
     conn = get_db_connection()
     cursor = conn.cursor()
     cursor.execute("SELECT * FROM searches WHERE id = ?;", (search_id,))
@@ -284,7 +398,7 @@ def get_search_results(search_id: int) -> dict:
     conn.close()
     return search
 
-def get_patents_by_ids(patent_ids: list[int]) -> list[dict]:
+def get_patents_by_ids(patent_ids: list[int], user_id: int) -> list[dict]:
     if not patent_ids:
         return []
     conn = get_db_connection()
@@ -295,17 +409,20 @@ def get_patents_by_ids(patent_ids: list[int]) -> list[dict]:
         SELECT p.*, s.query AS keywords, s.search_mode
         FROM patents p
         JOIN searches s ON p.search_id = s.id
-        WHERE p.id IN ({placeholders})
+        JOIN projects pr ON s.project_id = pr.id
+        WHERE p.id IN ({placeholders}) AND pr.user_id = ?
         ORDER BY p.id ASC;
         """,
-        patent_ids,
+        (*patent_ids, user_id),
     )
     rows = cursor.fetchall()
     patents = [dict(row) for row in rows]
     conn.close()
     return patents
 
-def get_all_project_patents(project_id: int) -> list[dict]:
+def get_all_project_patents(project_id: int, user_id: int) -> list[dict]:
+    if not verify_project_ownership(project_id, user_id):
+        raise PermissionError("Access denied")
     conn = get_db_connection()
     cursor = conn.cursor()
     cursor.execute(
@@ -329,8 +446,10 @@ def update_patent_audit(
     reasoning: str,
     overlap_reasons: str = "",
     difference_reasons: str = "",
+    user_id: int = None,
 ):
-    """Updates the AI audit details for a specific patent by database row ID."""
+    if user_id is not None and not verify_patent_ownership(patent_id, user_id):
+        raise PermissionError("Access denied")
     conn = get_db_connection()
     cursor = conn.cursor()
     try:
