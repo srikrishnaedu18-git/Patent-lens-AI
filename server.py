@@ -1125,4 +1125,11 @@ app.mount("/", StaticFiles(directory=static_dir, html=True), name="static")
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run("server:app", host="127.0.0.1", port=8000, reload=True)
+    import os
+    
+    host = os.environ.get("HOST", "127.0.0.1")
+    port = int(os.environ.get("PORT", "8000"))
+    reload = os.environ.get("ENV", "development").lower() == "development"
+    
+    logger.info("[Server] Starting server on %s:%d (reload=%s)", host, port, reload)
+    uvicorn.run("server:app", host=host, port=port, reload=reload)

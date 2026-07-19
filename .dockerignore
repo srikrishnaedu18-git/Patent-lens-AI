@@ -1,0 +1,32 @@
+# Python build/cache artifacts
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Local configuration
+.env
+.env.local
+
+# Virtual environments
+venv/
+.venv/
+env/
+
+# Databases
+patent_lens.db
+patent_lens.db-shm
+patent_lens.db-wal
+
+# Version control
+.git/
+.gitignore
+.gitattributes
+
+# IDEs
+.vscode/
+.idea/
+*.code-workspace
