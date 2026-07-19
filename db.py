@@ -8,16 +8,67 @@ from datetime import datetime
 
 import os
 
+import psycopg2
+import psycopg2.extras
+
 logger = logging.getLogger("db")
 
-DB_PATH = Path(os.environ.get("DB_PATH", str(Path(__file__).parent / "patent_lens.db")))
+DEFAULT_DB_PATH = Path(__file__).parent / "patent_lens.db"
+
+
+def get_database_url() -> str:
+    database_url = os.environ.get("DATABASE_URL")
+    if database_url:
+        return database_url
+
+    db_path = os.environ.get("DB_PATH", str(DEFAULT_DB_PATH))
+    return f"sqlite:///{Path(db_path).expanduser().resolve()}"
+
+
+def get_database_backend() -> str:
+    return "postgres" if os.environ.get("DATABASE_URL") else "sqlite"
+
 
 def get_db_connection():
-    conn = sqlite3.connect(DB_PATH)
-    conn.row_factory = sqlite3.Row
-    # Enable foreign keys for cascade deletes
-    conn.execute("PRAGMA foreign_keys = ON;")
+    database_url = get_database_url()
+    if database_url.startswith("sqlite:///"):
+        db_path = database_url[len("sqlite:///"):]
+        conn = sqlite3.connect(db_path)
+        conn.row_factory = sqlite3.Row
+        conn.execute("PRAGMA foreign_keys = ON;")
+        return conn
+
+    conn = psycopg2.connect(database_url)
+    conn.autocommit = False
+    conn.cursor_factory = psycopg2.extras.RealDictCursor
     return conn
+
+
+def get_primary_key_definition() -> str:
+    return "BIGSERIAL PRIMARY KEY" if get_database_backend() == "postgres" else "INTEGER PRIMARY KEY AUTOINCREMENT"
+
+
+def add_column_sql(table: str, column: str, col_def: str) -> str:
+    if get_database_backend() == "postgres":
+        return f"ALTER TABLE {table} ADD COLUMN IF NOT EXISTS {column} {col_def};"
+    return f"ALTER TABLE {table} ADD COLUMN {column} {col_def};"
+
+
+def insert_and_get_id(cursor, statement: str, params=()):
+    if get_database_backend() == "postgres":
+        if "RETURNING" not in statement.upper():
+            statement = f"{statement} RETURNING id"
+        cursor.execute(statement, params)
+        row = cursor.fetchone()
+        return row[0] if row else None
+
+    cursor.execute(statement, params)
+    return cursor.lastrowid
+
+
+def sql_placeholder() -> str:
+    return "%s" if get_database_backend() == "postgres" else "?"
+
 
 def init_db():
     """
@@ -26,13 +77,14 @@ def init_db():
     """
     conn = get_db_connection()
     cursor = conn.cursor()
+    pk_def = get_primary_key_definition()
     
     # ── Core tables ──────────────────────────────────────────────────────────
 
     # Users table
-    cursor.execute("""
+    cursor.execute(f"""
     CREATE TABLE IF NOT EXISTS users (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        id {pk_def},
         username TEXT UNIQUE NOT NULL,
         password_hash TEXT NOT NULL,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
@@ -43,16 +95,16 @@ def init_db():
     cursor.execute("""
     CREATE TABLE IF NOT EXISTS sessions (
         id TEXT PRIMARY KEY,
-        user_id INTEGER NOT NULL,
+        user_id BIGINT NOT NULL,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
     );
     """)
 
-    cursor.execute("""
+    cursor.execute(f"""
     CREATE TABLE IF NOT EXISTS projects (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        user_id INTEGER,
+        id {pk_def},
+        user_id BIGINT,
         name TEXT UNIQUE NOT NULL,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
@@ -61,10 +113,10 @@ def init_db():
     
     # searches now includes ai_queries (JSON array of generated query strings)
     # and search_mode to distinguish 'manual' vs 'ai' searches
-    cursor.execute("""
+    cursor.execute(f"""
     CREATE TABLE IF NOT EXISTS searches (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        project_id INTEGER NOT NULL,
+        id {pk_def},
+        project_id BIGINT NOT NULL,
         query TEXT NOT NULL,
         search_mode TEXT DEFAULT 'manual',
         ai_queries TEXT,
@@ -75,10 +127,10 @@ def init_db():
     );
     """)
     
-    cursor.execute("""
+    cursor.execute(f"""
     CREATE TABLE IF NOT EXISTS patents (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        search_id INTEGER NOT NULL,
+        id {pk_def},
+        search_id BIGINT NOT NULL,
         source TEXT DEFAULT 'Google Patents',
         patent_id TEXT NOT NULL,
         title TEXT NOT NULL,
@@ -112,7 +164,7 @@ def init_db():
 
     for table, column, col_def in migrations:
         try:
-            cursor.execute(f"ALTER TABLE {table} ADD COLUMN {column} {col_def};")
+            cursor.execute(add_column_sql(table, column, col_def))
             conn.commit()
             logger.info("[DB] Migration applied: ALTER TABLE %s ADD COLUMN %s", table, column)
         except sqlite3.OperationalError as e:
@@ -122,7 +174,7 @@ def init_db():
                 logger.error("[DB] Unexpected migration error for %s.%s: %s", table, column, e)
     
     conn.close()
-    logger.info("[DB] Database initialised at: %s", DB_PATH)
+    logger.info("[DB] Database initialised at: %s", get_database_url())
 
 
 # ── User Authentication Helpers ──────────────────────────────────────────────
@@ -135,12 +187,15 @@ def register_user(username: str, password: str) -> int:
     cursor = conn.cursor()
     try:
         pwd_hash = hash_password(password)
-        cursor.execute("INSERT INTO users (username, password_hash) VALUES (?, ?);", (username, pwd_hash))
+        user_id = insert_and_get_id(
+            cursor,
+            "INSERT INTO users (username, password_hash) VALUES (%s, %s);" if get_database_backend() == "postgres" else "INSERT INTO users (username, password_hash) VALUES (?, ?);",
+            (username, pwd_hash),
+        )
         conn.commit()
-        user_id = cursor.lastrowid
         logger.info("[DB] Registered user: id=%d username='%s'", user_id, username)
         return user_id
-    except sqlite3.IntegrityError:
+    except (sqlite3.IntegrityError, psycopg2.IntegrityError):
         raise ValueError("Username already exists")
     finally:
         conn.close()
@@ -149,7 +204,10 @@ def verify_user(username: str, password: str) -> dict:
     conn = get_db_connection()
     cursor = conn.cursor()
     pwd_hash = hash_password(password)
-    cursor.execute("SELECT id, username FROM users WHERE username = ? AND password_hash = ?;", (username, pwd_hash))
+    cursor.execute(
+        "SELECT id, username FROM users WHERE username = %s AND password_hash = %s;" if get_database_backend() == "postgres" else "SELECT id, username FROM users WHERE username = ? AND password_hash = ?;",
+        (username, pwd_hash),
+    )
     row = cursor.fetchone()
     conn.close()
     return dict(row) if row else None
@@ -159,7 +217,10 @@ def create_session(user_id: int) -> str:
     conn = get_db_connection()
     cursor = conn.cursor()
     try:
-        cursor.execute("INSERT INTO sessions (id, user_id) VALUES (?, ?);", (session_id, user_id))
+        cursor.execute(
+            "INSERT INTO sessions (id, user_id) VALUES (%s, %s);" if get_database_backend() == "postgres" else "INSERT INTO sessions (id, user_id) VALUES (?, ?);",
+            (session_id, user_id),
+        )
         conn.commit()
         return session_id
     finally:
@@ -170,7 +231,10 @@ def get_user_id_by_session(session_id: str) -> int:
         return None
     conn = get_db_connection()
     cursor = conn.cursor()
-    cursor.execute("SELECT user_id FROM sessions WHERE id = ?;", (session_id,))
+    cursor.execute(
+        "SELECT user_id FROM sessions WHERE id = %s;" if get_database_backend() == "postgres" else "SELECT user_id FROM sessions WHERE id = ?;",
+        (session_id,),
+    )
     row = cursor.fetchone()
     conn.close()
     return row["user_id"] if row else None
@@ -180,7 +244,10 @@ def delete_session(session_id: str):
         return
     conn = get_db_connection()
     cursor = conn.cursor()
-    cursor.execute("DELETE FROM sessions WHERE id = ?;", (session_id,))
+    cursor.execute(
+        "DELETE FROM sessions WHERE id = %s;" if get_database_backend() == "postgres" else "DELETE FROM sessions WHERE id = ?;",
+        (session_id,),
+    )
     conn.commit()
     conn.close()
 
@@ -190,7 +257,10 @@ def delete_session(session_id: str):
 def verify_project_ownership(project_id: int, user_id: int) -> bool:
     conn = get_db_connection()
     cursor = conn.cursor()
-    cursor.execute("SELECT 1 FROM projects WHERE id = ? AND user_id = ?;", (project_id, user_id))
+    cursor.execute(
+        "SELECT 1 FROM projects WHERE id = %s AND user_id = %s;" if get_database_backend() == "postgres" else "SELECT 1 FROM projects WHERE id = ? AND user_id = ?;",
+        (project_id, user_id),
+    )
     row = cursor.fetchone()
     conn.close()
     return row is not None
@@ -202,7 +272,7 @@ def verify_search_ownership(search_id: int, user_id: int) -> bool:
         """
         SELECT 1 FROM searches s
         JOIN projects p ON s.project_id = p.id
-        WHERE s.id = ? AND p.user_id = ?;
+        WHERE s.id = %s AND p.user_id = %s;
         """,
         (search_id, user_id),
     )
@@ -218,7 +288,7 @@ def verify_patent_ownership(patent_id: int, user_id: int) -> bool:
         SELECT 1 FROM patents p
         JOIN searches s ON p.search_id = s.id
         JOIN projects pr ON s.project_id = pr.id
-        WHERE p.id = ? AND pr.user_id = ?;
+        WHERE p.id = %s AND pr.user_id = %s;
         """,
         (patent_id, user_id),
     )
@@ -232,7 +302,10 @@ def verify_patent_ownership(patent_id: int, user_id: int) -> bool:
 def get_projects(user_id: int):
     conn = get_db_connection()
     cursor = conn.cursor()
-    cursor.execute("SELECT * FROM projects WHERE user_id = ? ORDER BY created_at DESC;", (user_id,))
+    cursor.execute(
+        "SELECT * FROM projects WHERE user_id = %s ORDER BY created_at DESC;" if get_database_backend() == "postgres" else "SELECT * FROM projects WHERE user_id = ? ORDER BY created_at DESC;",
+        (user_id,),
+    )
     rows = cursor.fetchall()
     projects = [dict(row) for row in rows]
     conn.close()
@@ -242,16 +315,25 @@ def create_project(name: str, user_id: int):
     conn = get_db_connection()
     cursor = conn.cursor()
     try:
-        cursor.execute("INSERT INTO projects (name, user_id) VALUES (?, ?);", (name, user_id))
+        project_id = insert_and_get_id(
+            cursor,
+            "INSERT INTO projects (name, user_id) VALUES (%s, %s);" if get_database_backend() == "postgres" else "INSERT INTO projects (name, user_id) VALUES (?, ?);",
+            (name, user_id),
+        )
         conn.commit()
-        project_id = cursor.lastrowid
-        cursor.execute("SELECT * FROM projects WHERE id = ?;", (project_id,))
+        cursor.execute(
+            "SELECT * FROM projects WHERE id = %s;" if get_database_backend() == "postgres" else "SELECT * FROM projects WHERE id = ?;",
+            (project_id,),
+        )
         project = dict(cursor.fetchone())
         logger.info("[DB] Created project: id=%d name='%s' for user_id=%d", project_id, name, user_id)
         return project
-    except sqlite3.IntegrityError:
+    except (sqlite3.IntegrityError, psycopg2.IntegrityError):
         # Check if this user owns a project with this name
-        cursor.execute("SELECT * FROM projects WHERE name = ? AND user_id = ?;", (name, user_id))
+        cursor.execute(
+            "SELECT * FROM projects WHERE name = %s AND user_id = %s;" if get_database_backend() == "postgres" else "SELECT * FROM projects WHERE name = ? AND user_id = ?;",
+            (name, user_id),
+        )
         row = cursor.fetchone()
         if row:
             logger.warning("[DB] Project name '%s' already exists for user=%d — returning existing.", name, user_id)
@@ -270,7 +352,10 @@ def delete_project(project_id: int, user_id: int):
         raise PermissionError("Access denied")
     conn = get_db_connection()
     cursor = conn.cursor()
-    cursor.execute("DELETE FROM projects WHERE id = ?;", (project_id,))
+    cursor.execute(
+        "DELETE FROM projects WHERE id = %s;" if get_database_backend() == "postgres" else "DELETE FROM projects WHERE id = ?;",
+        (project_id,),
+    )
     conn.commit()
     conn.close()
     logger.info("[DB] Deleted project id=%d for user_id=%d (cascade applied)", project_id, user_id)
@@ -292,8 +377,13 @@ def create_search(
     conn = get_db_connection()
     cursor = conn.cursor()
     try:
-        cursor.execute(
+        search_id = insert_and_get_id(
+            cursor,
             """
+            INSERT INTO searches
+                (project_id, query, search_mode, ai_queries, ai_cpc_codes, ai_rationale)
+            VALUES (%s, %s, %s, %s, %s, %s)
+            """ if get_database_backend() == "postgres" else """
             INSERT INTO searches
                 (project_id, query, search_mode, ai_queries, ai_cpc_codes, ai_rationale)
             VALUES (?, ?, ?, ?, ?, ?);
@@ -308,7 +398,6 @@ def create_search(
             ),
         )
         conn.commit()
-        search_id = cursor.lastrowid
         logger.info(
             "[DB] Created search id=%d mode='%s' for project %d",
             search_id, search_mode, project_id,
@@ -331,7 +420,7 @@ def save_patents(search_id: int, patents: list[dict], user_id: int = None):
                 """
                 INSERT INTO patents
                     (search_id, source, patent_id, title, abstract, url, confidence_score, ai_reasoning)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?);
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
                 """,
                 (
                     search_id,
@@ -359,7 +448,7 @@ def get_project_data(project_id: int, user_id: int) -> list[dict]:
     cursor = conn.cursor()
     
     cursor.execute(
-        "SELECT * FROM searches WHERE project_id = ? ORDER BY created_at DESC;",
+        f"SELECT * FROM searches WHERE project_id = {sql_placeholder()} ORDER BY created_at DESC;",
         (project_id,),
     )
     searches = [dict(row) for row in cursor.fetchall()]
@@ -371,7 +460,7 @@ def get_project_data(project_id: int, user_id: int) -> list[dict]:
             s[json_col] = json.loads(raw) if raw else []
 
         cursor.execute(
-            "SELECT * FROM patents WHERE search_id = ? ORDER BY id ASC;",
+            f"SELECT * FROM patents WHERE search_id = {sql_placeholder()} ORDER BY id ASC;",
             (s["id"],),
         )
         s["patents"] = [dict(row) for row in cursor.fetchall()]
@@ -384,7 +473,7 @@ def get_search_results(search_id: int, user_id: int) -> dict:
         raise PermissionError("Access denied")
     conn = get_db_connection()
     cursor = conn.cursor()
-    cursor.execute("SELECT * FROM searches WHERE id = ?;", (search_id,))
+    cursor.execute(f"SELECT * FROM searches WHERE id = {sql_placeholder()};", (search_id,))
     search_row = cursor.fetchone()
     if not search_row:
         conn.close()
@@ -395,7 +484,7 @@ def get_search_results(search_id: int, user_id: int) -> dict:
         raw = search.get(json_col)
         search[json_col] = json.loads(raw) if raw else []
 
-    cursor.execute("SELECT * FROM patents WHERE search_id = ? ORDER BY id ASC;", (search_id,))
+    cursor.execute(f"SELECT * FROM patents WHERE search_id = {sql_placeholder()} ORDER BY id ASC;", (search_id,))
     search["patents"] = [dict(row) for row in cursor.fetchall()]
     conn.close()
     return search
@@ -405,14 +494,14 @@ def get_patents_by_ids(patent_ids: list[int], user_id: int) -> list[dict]:
         return []
     conn = get_db_connection()
     cursor = conn.cursor()
-    placeholders = ",".join("?" for _ in patent_ids)
+    placeholders = ",".join(sql_placeholder() for _ in patent_ids)
     cursor.execute(
         f"""
         SELECT p.*, s.query AS keywords, s.search_mode
         FROM patents p
         JOIN searches s ON p.search_id = s.id
         JOIN projects pr ON s.project_id = pr.id
-        WHERE p.id IN ({placeholders}) AND pr.user_id = ?
+        WHERE p.id IN ({placeholders}) AND pr.user_id = {sql_placeholder()}
         ORDER BY p.id ASC;
         """,
         (*patent_ids, user_id),
@@ -432,7 +521,7 @@ def get_all_project_patents(project_id: int, user_id: int) -> list[dict]:
         SELECT p.*, s.query AS keywords, s.search_mode
         FROM patents p
         JOIN searches s ON p.search_id = s.id
-        WHERE s.project_id = ?
+        WHERE s.project_id = {sql_placeholder()}
         ORDER BY s.created_at DESC, p.id ASC;
         """,
         (project_id,),
@@ -458,9 +547,9 @@ def update_patent_audit(
         cursor.execute(
             """
             UPDATE patents
-            SET confidence_score = ?, ai_reasoning = ?,
-                overlap_reasons = ?, difference_reasons = ?
-            WHERE id = ?;
+            SET confidence_score = %s, ai_reasoning = %s,
+                overlap_reasons = %s, difference_reasons = %s
+            WHERE id = %s;
             """,
             (confidence_score, reasoning, overlap_reasons, difference_reasons, patent_id),
         )

@@ -3,8 +3,9 @@
 PatentLens Studio is a multi-user FastAPI web app for running prior-art patent searches against Google Patents and Indian Patents. It features secure user authentication, isolated per-user project spaces, and an AI-powered search pipeline.
 
 **Key capabilities:**
+
 - 🔐 Multi-user login with session-based auth and cookie persistence
-- 📁 Project-based search history stored in SQLite, scoped per user
+- 📁 Project-based search history stored in PostgreSQL (or SQLite locally), scoped per user
 - 🔍 Manual keyword patent scraping from Google Patents and IP India
 - 🤖 AI-assisted search query generation with Gemini
 - ✅ On-demand AI relevance audits (Red / Yellow / Green scoring)
@@ -89,7 +90,7 @@ Open **http://127.0.0.1:8000** in your browser.
 
 The first time you open the app you'll see a login screen. Register an account, and your projects will be fully isolated to that account.
 
-The SQLite database (`patent_lens.db`) is created automatically on first startup.
+The app uses PostgreSQL automatically when `DATABASE_URL` is set; otherwise it falls back to SQLite and creates `patent_lens.db` locally.
 
 ---
 
@@ -100,6 +101,7 @@ This project includes a `render.yaml` blueprint and `Dockerfile` for one-click d
 ### Steps
 
 1. **Push to GitHub**
+
    ```bash
    git remote add origin https://github.com/your-username/patent-lens.git
    git push -u origin main
@@ -117,17 +119,13 @@ This project includes a `render.yaml` blueprint and `Dockerfile` for one-click d
    | `ENV` | `production` |
    | `HOST` | `0.0.0.0` |
    | `PORT` | `10000` |
-   | `DB_PATH` | `/data/patent_lens.db` |
    | `INDIA_PATENT_HEADLESS` | `true` |
 
-4. **Add a Persistent Disk** (required for SQLite):
-   - In the Render service settings → Disks → Add Disk
-   - Mount Path: `/data`
-   - Size: 1 GB (free tier supports this)
+4. **Add a PostgreSQL database** in Render and let the web service consume it via `DATABASE_URL` (the `render.yaml` file wires this up automatically).
 
-5. **Deploy** — Render will build the Docker image and launch the service.
+5. **Deploy** — Render will build the Docker image, provision PostgreSQL, and launch the service.
 
-> ⚠️ **Important:** Without a persistent disk, the SQLite database will be wiped on every redeploy. Always configure the disk.
+> ⚠️ **Important:** If you use SQLite locally, keep the database file on a persistent volume. On Render, PostgreSQL is the recommended persistent option.
 
 ### Docker Local Test
 
@@ -185,13 +183,13 @@ python scraper.py --query "blockchain supply chain" --max 20 --out results
 
 ## Troubleshooting
 
-| Problem | Fix |
-|---|---|
-| `Address already in use` | Stop the running server or use a different port: `PORT=8001 python server.py` |
-| `GEMINI_API_KEY is not set` | Copy `.env.example` → `.env` and fill in the key |
-| Playwright browser errors | Run `python -m playwright install chromium && python -m playwright install-deps chromium` |
-| PDF export fails | Run `pip install -r requirements.txt` and restart |
-| Login loop on Render | Make sure `DB_PATH` points to the persistent disk and the disk is attached |
+| Problem                     | Fix                                                                                                     |
+| --------------------------- | ------------------------------------------------------------------------------------------------------- |
+| `Address already in use`    | Stop the running server or use a different port: `PORT=8001 python server.py`                           |
+| `GEMINI_API_KEY is not set` | Copy `.env.example` → `.env` and fill in the key                                                        |
+| Playwright browser errors   | Run `python -m playwright install chromium && python -m playwright install-deps chromium`               |
+| PDF export fails            | Run `pip install -r requirements.txt` and restart                                                       |
+| Login loop on Render        | Make sure `DATABASE_URL` is set correctly and the Render Postgres add-on is attached to the web service |
 
 ---
 

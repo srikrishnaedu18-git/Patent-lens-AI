@@ -1,8 +1,0 @@
-[build]
-dockerfile = "Dockerfile"
-
-[deploy]
-healthcheckPath = "/favicon.ico"
-healthcheckTimeout = 300
-restartPolicyType = "on_failure"
-restartPolicyMaxRetries = 3
