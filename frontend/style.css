@@ -2049,7 +2049,7 @@ button.stage-pill#pill-auditing:hover {
 
 .india-query-row {
   display: grid;
-  grid-template-columns: 140px 1fr 80px auto;
+  grid-template-columns: auto 1fr 80px auto;
   gap: 8px;
   align-items: center;
   background-color: var(--bg-primary);

@@ -2246,6 +2246,25 @@ function showIndiaOptionsModal() {
   elModalIndiaOptions.classList.remove("hidden");
 }
 
+function adjustSelectWidth(select) {
+  if (!select) return;
+  const text = select.options[select.selectedIndex].text;
+  const tempSpan = document.createElement("span");
+  tempSpan.style.visibility = "hidden";
+  tempSpan.style.position = "absolute";
+  tempSpan.style.whiteSpace = "nowrap";
+  const computedStyle = window.getComputedStyle(select);
+  tempSpan.style.fontFamily = computedStyle.fontFamily || "sans-serif";
+  tempSpan.style.fontSize = computedStyle.fontSize || "13.6px";
+  tempSpan.style.fontWeight = computedStyle.fontWeight || "400";
+  tempSpan.style.letterSpacing = computedStyle.letterSpacing || "normal";
+  tempSpan.innerText = text;
+  document.body.appendChild(tempSpan);
+  const width = tempSpan.getBoundingClientRect().width;
+  document.body.removeChild(tempSpan);
+  select.style.width = `${Math.ceil(width) + 36}px`;
+}
+
 function addRowToUi(container, field = "TI", text = "", logic = "AND") {
   if (!container) return;
   const rowCount = container.querySelectorAll(".india-query-row").length;
@@ -2278,11 +2297,15 @@ function addRowToUi(container, field = "TI", text = "", logic = "AND") {
     </button>
   `;
 
+  const selectEl = rowDiv.querySelector(".row-field");
+  selectEl.addEventListener("change", () => adjustSelectWidth(selectEl));
+
   rowDiv.querySelector(".btn-remove-row").addEventListener("click", () => {
     rowDiv.remove();
   });
 
   container.appendChild(rowDiv);
+  adjustSelectWidth(selectEl);
 }
 
 function renderManualIndiaQueryRows() {
