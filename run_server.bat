@@ -22,4 +22,4 @@ REM Install Playwright Chromium browser (required for scraping)
 py -m playwright install chromium
 
 REM Launch the FastAPI server with live reload
-py -m uvicorn server:app --host 127.0.0.1 --port 8000 --reload
+py -m uvicorn backend.server:app --host 127.0.0.1 --port 8000 --reload

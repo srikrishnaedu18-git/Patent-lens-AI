@@ -11,6 +11,9 @@ env/
 patent_lens.db
 patent_lens.db-shm
 patent_lens.db-wal
+db/patent_lens.db
+db/patent_lens.db-shm
+db/patent_lens.db-wal
 
 # OS / IDE
 .DS_Store

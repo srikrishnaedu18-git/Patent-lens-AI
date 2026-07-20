@@ -18,6 +18,12 @@ services:
           property: connectionString
       - key: GEMINI_API_KEY
         sync: false
+      - key: GEMINI_API_KEY1
+        sync: false
+      - key: GEMINI_API_KEY2
+        sync: false
+      - key: TWO_CAPTCHA_API_KEY
+        sync: false
       - key: INDIA_PATENT_HEADLESS
         value: "true"
 

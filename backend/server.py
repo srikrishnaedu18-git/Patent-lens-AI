@@ -4,6 +4,15 @@ Dual-mode: Manual keyword scrape + AI-driven prior art pipeline
 SSE streaming for live progress. Scraping and AI auditing are separate steps.
 """
 
+import sys
+from pathlib import Path as _Path
+
+# ── Path bootstrap (allow running from project root or backend/) ───────────────
+_ROOT = _Path(__file__).resolve().parent.parent  # project root
+sys.path.insert(0, str(_ROOT / "db"))       # db.py
+sys.path.insert(0, str(_ROOT / "ai"))       # ai_agent.py
+sys.path.insert(0, str(_ROOT / "backend"))  # scraper.py
+
 import io
 import csv
 import json
@@ -1231,7 +1240,7 @@ async def favicon():
 
 
 # ── Static UI ─────────────────────────────────────────────────────────────────
-static_dir = Path(__file__).parent / "static"
+static_dir = Path(__file__).resolve().parent.parent / "frontend"
 static_dir.mkdir(exist_ok=True)
 app.mount("/", StaticFiles(directory=static_dir, html=True), name="static")
 
@@ -1244,4 +1253,4 @@ if __name__ == "__main__":
     reload = os.environ.get("ENV", "development").lower() == "development"
     
     logger.info("[Server] Starting server on %s:%d (reload=%s)", host, port, reload)
-    uvicorn.run("server:app", host=host, port=port, reload=reload)
+    uvicorn.run("backend.server:app", host=host, port=port, reload=reload, app_dir=str(_ROOT))

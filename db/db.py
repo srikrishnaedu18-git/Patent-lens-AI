@@ -167,11 +167,14 @@ def init_db():
             cursor.execute(add_column_sql(table, column, col_def))
             conn.commit()
             logger.info("[DB] Migration applied: ALTER TABLE %s ADD COLUMN %s", table, column)
-        except sqlite3.OperationalError as e:
-            if "duplicate column name" in str(e).lower():
+        except (sqlite3.OperationalError, psycopg2.errors.DuplicateColumn, Exception) as e:
+            err_str = str(e).lower()
+            if "duplicate column" in err_str or "already exists" in err_str:
                 logger.debug("[DB] Column %s.%s already exists — skipping migration.", table, column)
+                conn.rollback()  # required for psycopg2 after an error
             else:
                 logger.error("[DB] Unexpected migration error for %s.%s: %s", table, column, e)
+                conn.rollback()
     
     conn.close()
     logger.info("[DB] Database initialised at: %s", get_database_url())
@@ -268,11 +271,12 @@ def verify_project_ownership(project_id: int, user_id: int) -> bool:
 def verify_search_ownership(search_id: int, user_id: int) -> bool:
     conn = get_db_connection()
     cursor = conn.cursor()
+    ph = sql_placeholder()
     cursor.execute(
-        """
+        f"""
         SELECT 1 FROM searches s
         JOIN projects p ON s.project_id = p.id
-        WHERE s.id = %s AND p.user_id = %s;
+        WHERE s.id = {ph} AND p.user_id = {ph};
         """,
         (search_id, user_id),
     )
@@ -283,12 +287,13 @@ def verify_search_ownership(search_id: int, user_id: int) -> bool:
 def verify_patent_ownership(patent_id: int, user_id: int) -> bool:
     conn = get_db_connection()
     cursor = conn.cursor()
+    ph = sql_placeholder()
     cursor.execute(
-        """
+        f"""
         SELECT 1 FROM patents p
         JOIN searches s ON p.search_id = s.id
         JOIN projects pr ON s.project_id = pr.id
-        WHERE p.id = %s AND pr.user_id = %s;
+        WHERE p.id = {ph} AND pr.user_id = {ph};
         """,
         (patent_id, user_id),
     )
@@ -415,12 +420,13 @@ def save_patents(search_id: int, patents: list[dict], user_id: int = None):
     conn = get_db_connection()
     cursor = conn.cursor()
     try:
+        ph = sql_placeholder()
         for p in patents:
             cursor.execute(
-                """
+                f"""
                 INSERT INTO patents
                     (search_id, source, patent_id, title, abstract, url, confidence_score, ai_reasoning)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                VALUES ({ph}, {ph}, {ph}, {ph}, {ph}, {ph}, {ph}, {ph})
                 """,
                 (
                     search_id,
@@ -517,7 +523,7 @@ def get_all_project_patents(project_id: int, user_id: int) -> list[dict]:
     conn = get_db_connection()
     cursor = conn.cursor()
     cursor.execute(
-        """
+        f"""
         SELECT p.*, s.query AS keywords, s.search_mode
         FROM patents p
         JOIN searches s ON p.search_id = s.id
@@ -544,12 +550,13 @@ def update_patent_audit(
     conn = get_db_connection()
     cursor = conn.cursor()
     try:
+        ph = sql_placeholder()
         cursor.execute(
-            """
+            f"""
             UPDATE patents
-            SET confidence_score = %s, ai_reasoning = %s,
-                overlap_reasons = %s, difference_reasons = %s
-            WHERE id = %s;
+            SET confidence_score = {ph}, ai_reasoning = {ph},
+                overlap_reasons = {ph}, difference_reasons = {ph}
+            WHERE id = {ph};
             """,
             (confidence_score, reasoning, overlap_reasons, difference_reasons, patent_id),
         )

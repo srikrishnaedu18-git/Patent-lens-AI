@@ -50,4 +50,4 @@ COPY . .
 EXPOSE 8000
 
 # Production entrypoint
-CMD ["python", "server.py"]
+CMD ["python", "backend/server.py"]
