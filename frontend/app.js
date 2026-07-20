@@ -1,9 +1,10 @@
 // Intercept 401 Unauthorized globally
 const originalFetch = window.fetch;
 window.fetch = async (...args) => {
-  const url = typeof args[0] === 'string' ? args[0] : (args[0] && args[0].url) || "";
+  const url =
+    typeof args[0] === "string" ? args[0] : (args[0] && args[0].url) || "";
   const response = await originalFetch(...args);
-  if (response.status === 401 && !url.includes('/api/auth/')) {
+  if (response.status === 401 && !url.includes("/api/auth/")) {
     document.getElementById("auth-overlay").classList.remove("hidden");
     state.projects = [];
     state.activeProjectId = null;
@@ -28,10 +29,11 @@ let state = {
   auditMode: "sequential",
   searchSources: ["google"],
   aiResponse: null,
-  activeFilter: [],          // e.g. ["Red", "Yellow"]
-  activeRequirement: "",      // stored requirement text for re-auditing
+  activeFilter: [], // e.g. ["Red", "Yellow"]
+  activeRequirement: "", // stored requirement text for re-auditing
   lastScrapedSearchId: null,
   lastScrapedKeywords: "",
+  historySearches: [],
   indiaOptions: {
     published: true,
     granted: false,
@@ -39,15 +41,14 @@ let state = {
     from_date: "01/01/2020",
     to_date: "",
     logic_field: "AND",
-    rows: [{ field: "TI", text: "", logic: "AND" }]
+    rows: [{ field: "TI", text: "", logic: "AND" }],
   },
   activeCaptchaTaskId: null,
-  captchaMode: "auto",       // "auto" | "manual"
+  captchaMode: "auto", // "auto" | "manual"
   captchaService: "2captcha", // currently only "2captcha" for auto
   activeTaskId: null,
-  activeFlow: null
+  activeFlow: null,
 };
-
 
 // ── DOM References ───────────────────────────────────────────────────────────
 const elProjectsList = document.getElementById("projects-list");
@@ -65,7 +66,9 @@ const elPanelAi = document.getElementById("panel-ai");
 // Manual Search Form
 const elScrapeFormManual = document.getElementById("scrape-form-manual");
 const elKeywordsInput = document.getElementById("keywords-input");
-const elManualDescriptionInput = document.getElementById("manual-description-input");
+const elManualDescriptionInput = document.getElementById(
+  "manual-description-input",
+);
 const elLimitInputManual = document.getElementById("limit-input-manual");
 const elBtnManualScrape = document.getElementById("btn-manual-scrape");
 const elBtnManualText = document.getElementById("btn-manual-text");
@@ -93,13 +96,14 @@ const elSpinnerConfirm = document.getElementById("spinner-confirm");
 // Live Progress Feed
 const elLiveFeed = document.getElementById("live-feed");
 const elLiveLog = document.getElementById("live-log");
-const elAuditProgressBarWrap = document.getElementById("audit-progress-bar-wrap");
+const elAuditProgressBarWrap = document.getElementById(
+  "audit-progress-bar-wrap",
+);
 const elAuditProgressText = document.getElementById("audit-progress-text");
 const elAuditProgressPct = document.getElementById("audit-progress-pct");
 const elAuditProgressBar = document.getElementById("audit-progress-bar");
 const elHistoryContainer = document.getElementById("history-container");
 const elBtnTerminateScrape = document.getElementById("btn-terminate-scrape");
-
 
 // Pills
 const pills = {
@@ -107,25 +111,34 @@ const pills = {
   scraping: document.getElementById("pill-scraping"),
   auditing: document.getElementById("pill-auditing"),
   saving: document.getElementById("pill-saving"),
-  complete: document.getElementById("pill-complete")
+  complete: document.getElementById("pill-complete"),
 };
 
 // Global Export Elements
-const elSelectAllHistoryCheckbox = document.getElementById("select-all-history-checkbox");
+const elSelectAllHistoryCheckbox = document.getElementById(
+  "select-all-history-checkbox",
+);
 const elBtnGlobalDelete = document.getElementById("btn-global-delete");
 const elBtnGlobalExportCsv = document.getElementById("btn-global-export-csv");
-const elBtnGlobalExportPdf = document.getElementById("btn-global-export-pdf");
+const elBtnGlobalAiAudit = document.getElementById("btn-global-ai-audit");
+const elBtnGlobalDeepScrape = document.getElementById("btn-global-deep-scrape");
 
 // Delete confirmation modal elements
 const elModalDeleteConfirm = document.getElementById("modal-delete-confirm");
 const elDeleteSelectedList = document.getElementById("delete-selected-list");
 const elBtnDeleteCancel = document.getElementById("btn-delete-cancel");
-const elBtnDeleteConfirmAction = document.getElementById("btn-delete-confirm-action");
+const elBtnDeleteConfirmAction = document.getElementById(
+  "btn-delete-confirm-action",
+);
 
 // CAPTCHA Mode settings
 const elBtnCaptchaModeAuto = document.getElementById("btn-captcha-mode-auto");
-const elBtnCaptchaModeManual = document.getElementById("btn-captcha-mode-manual");
-const elCaptchaServiceSection = document.getElementById("captcha-service-section");
+const elBtnCaptchaModeManual = document.getElementById(
+  "btn-captcha-mode-manual",
+);
+const elCaptchaServiceSection = document.getElementById(
+  "captcha-service-section",
+);
 
 // Modals
 const elModalProject = document.getElementById("modal-project");
@@ -144,8 +157,7 @@ const elThemeToggle = document.getElementById("theme-toggle");
 const elThemeIconSun = document.getElementById("theme-icon-sun");
 const elThemeIconMoon = document.getElementById("theme-icon-moon");
 
-// Live log audit & Novelty Dashboard elements
-const elBtnLiveAudit = document.getElementById("btn-live-audit");
+// Novelty Dashboard elements
 const elNoveltyResultsPanel = document.getElementById("novelty-results-panel");
 const elNoveltyListRed = document.getElementById("novelty-list-red");
 const elNoveltyListYellow = document.getElementById("novelty-list-yellow");
@@ -165,11 +177,19 @@ const elSavedKeywordsList = document.getElementById("saved-keywords-list");
 const elModalAlert = document.getElementById("modal-alert");
 const elAlertMessage = document.getElementById("alert-message");
 const elBtnAlertOk = document.getElementById("btn-alert-ok");
+const elModalPatentDetails = document.getElementById("modal-patent-details");
+const elPatentDetailsTitle = document.getElementById("patent-details-title");
+const elPatentDetailsBody = document.getElementById("patent-details-body");
+const elBtnClosePatentDetails = document.getElementById(
+  "btn-close-patent-details",
+);
 
 // India options & CAPTCHA DOM elements
 const elBtnIndiaOptions = document.getElementById("btn-india-options");
 const elModalIndiaOptions = document.getElementById("modal-india-options");
-const elBtnCloseIndiaOptions = document.getElementById("btn-close-india-options");
+const elBtnCloseIndiaOptions = document.getElementById(
+  "btn-close-india-options",
+);
 const elIndiaOptionsForm = document.getElementById("india-options-form");
 const elIndiaOptPublished = document.getElementById("india-opt-published");
 const elIndiaOptGranted = document.getElementById("india-opt-granted");
@@ -182,9 +202,15 @@ const elBtnIndiaCancel = document.getElementById("btn-india-cancel");
 // Manual search panel India elements
 const elBtnSourceGoogle = document.getElementById("btn-source-google");
 const elBtnSourceIndia = document.getElementById("btn-source-india");
-const elBtnManualIndiaAddRow = document.getElementById("btn-manual-india-add-row");
-const elBtnManualIndiaRemoveRow = document.getElementById("btn-manual-india-remove-row");
-const elManualIndiaQueryRowsContainer = document.getElementById("manual-india-query-rows-container");
+const elBtnManualIndiaAddRow = document.getElementById(
+  "btn-manual-india-add-row",
+);
+const elBtnManualIndiaRemoveRow = document.getElementById(
+  "btn-manual-india-remove-row",
+);
+const elManualIndiaQueryRowsContainer = document.getElementById(
+  "manual-india-query-rows-container",
+);
 
 const elModalCaptcha = document.getElementById("modal-captcha");
 const elCaptchaImg = document.getElementById("captcha-img");
@@ -224,14 +250,14 @@ let authMode = "login"; // "login" | "register"
 function checkAuth() {
   // Use originalFetch directly so we don't trigger the interceptor's redirect loop
   originalFetch("/api/auth/me")
-    .then(res => {
+    .then((res) => {
       if (res.status === 200) {
         return res.json();
       } else {
         throw new Error("Not logged in");
       }
     })
-    .then(data => {
+    .then((data) => {
       // Logged in
       document.getElementById("user-display-name").textContent = data.username;
       document.getElementById("auth-overlay").classList.add("hidden");
@@ -252,7 +278,7 @@ function initAuth() {
   const submitBtn = document.getElementById("btn-auth-submit");
   const errorMsg = document.getElementById("auth-error-msg");
   const toggleText = document.getElementById("auth-toggle-text");
-  
+
   toggleBtn.addEventListener("click", (e) => {
     e.preventDefault();
     errorMsg.classList.add("hidden");
@@ -272,37 +298,37 @@ function initAuth() {
       toggleBtn.textContent = "Create an account";
     }
   });
-  
+
   form.addEventListener("submit", async (e) => {
     e.preventDefault();
     errorMsg.classList.add("hidden");
     submitBtn.disabled = true;
-    
+
     const username = document.getElementById("auth-username").value.trim();
     const password = document.getElementById("auth-password").value;
-    
+
     const url = authMode === "login" ? "/api/auth/login" : "/api/auth/register";
     try {
       // Use originalFetch here too to prevent handling 401 via general interceptor
       const res = await originalFetch(url, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ username, password })
+        body: JSON.stringify({ username, password }),
       });
-      
+
       if (!res.ok) {
         const data = await res.json();
         throw new Error(data.detail || "Authentication failed");
       }
-      
+
       const data = await res.json();
       document.getElementById("user-display-name").textContent = data.username;
       overlay.classList.add("hidden");
-      
+
       // Clear inputs
       document.getElementById("auth-username").value = "";
       document.getElementById("auth-password").value = "";
-      
+
       // Load dashboard data
       loadProjects();
     } catch (err) {
@@ -338,10 +364,12 @@ function initAuth() {
 function initSearchSources() {
   const saved = JSON.parse(localStorage.getItem("searchSources") || "null");
   if (Array.isArray(saved) && saved.length > 0) {
-    state.searchSources = saved.filter(src => ["google", "india"].includes(src));
+    state.searchSources = saved.filter((src) =>
+      ["google", "india"].includes(src),
+    );
   }
   if (state.searchSources.length === 0) state.searchSources = ["google"];
-  
+
   // Enforce mutual exclusivity
   if (state.searchSources.length > 1) {
     state.searchSources = [state.searchSources[0]];
@@ -353,14 +381,14 @@ function initSearchSources() {
 }
 
 function syncSourceCheckboxes() {
-  document.querySelectorAll('input[name="search-source"]').forEach(cb => {
+  document.querySelectorAll('input[name="search-source"]').forEach((cb) => {
     cb.checked = state.searchSources.includes(cb.value);
   });
 }
 
 function syncSourceToggleButtons() {
   const activeSource = state.searchSources[0] || "google";
-  document.querySelectorAll(".source-toggle-btn").forEach(btn => {
+  document.querySelectorAll(".source-toggle-btn").forEach((btn) => {
     if (btn.dataset.source === activeSource) {
       btn.classList.add("active");
     } else {
@@ -373,7 +401,7 @@ function updateSourceFieldsVisibility() {
   const activeSource = state.searchSources[0] || "google";
   const elGoogleFields = document.getElementById("group-keywords-google");
   const elIndiaFields = document.getElementById("group-keywords-india");
-  
+
   if (activeSource === "google") {
     if (elGoogleFields) elGoogleFields.classList.remove("hidden");
     if (elIndiaFields) elIndiaFields.classList.add("hidden");
@@ -387,9 +415,9 @@ function updateSourceFieldsVisibility() {
 function getSourceLabel() {
   const labels = {
     google: "Google Patents",
-    india: "Indian Patents"
+    india: "Indian Patents",
   };
-  return state.searchSources.map(src => labels[src] || src).join(", ");
+  return state.searchSources.map((src) => labels[src] || src).join(", ");
 }
 
 function handleSearchSourcesChange(e) {
@@ -401,7 +429,7 @@ function handleSearchSourcesChange(e) {
   }
 
   // Uncheck all other checkboxes to enforce mutual exclusivity
-  document.querySelectorAll('input[name="search-source"]').forEach(cb => {
+  document.querySelectorAll('input[name="search-source"]').forEach((cb) => {
     if (cb !== checkedCheckbox) {
       cb.checked = false;
     }
@@ -428,17 +456,17 @@ async function loadProjects() {
 
 function renderProjectsList() {
   elProjectsList.innerHTML = "";
-  
+
   if (state.projects.length === 0) {
     elProjectsList.innerHTML = `<li class="meta-text" style="padding: 10px 0; text-align: center;">No projects created</li>`;
     return;
   }
-  
-  state.projects.forEach(p => {
+
+  state.projects.forEach((p) => {
     const li = document.createElement("li");
-    li.className = `project-item ${state.activeProjectId === p.id ? 'active' : ''}`;
+    li.className = `project-item ${state.activeProjectId === p.id ? "active" : ""}`;
     li.dataset.id = p.id;
-    
+
     li.addEventListener("click", (e) => {
       if (e.target.closest(".project-delete-btn")) return;
       selectProject(p.id, p.name, p.created_at);
@@ -455,10 +483,12 @@ function renderProjectsList() {
         </svg>
       </button>
     `;
-    
+
     const btnDelete = li.querySelector(".project-delete-btn");
-    btnDelete.addEventListener("click", () => handleDeleteProject(p.id, p.name));
-    
+    btnDelete.addEventListener("click", () =>
+      handleDeleteProject(p.id, p.name),
+    );
+
     elProjectsList.appendChild(li);
   });
 }
@@ -466,8 +496,8 @@ function renderProjectsList() {
 async function selectProject(id, name, createdAt) {
   state.activeProjectId = id;
   state.activeProjectName = name;
-  
-  Array.from(elProjectsList.children).forEach(child => {
+
+  Array.from(elProjectsList.children).forEach((child) => {
     if (child.dataset.id == id) {
       child.classList.add("active");
     } else {
@@ -477,28 +507,31 @@ async function selectProject(id, name, createdAt) {
 
   elActiveProjectTitle.innerText = name;
   const dateObj = parseUtcDate(createdAt);
-  elActiveProjectDate.innerText = `Created: ${dateObj.toLocaleDateString()} at ${dateObj.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}`;
+  elActiveProjectDate.innerText = `Created: ${dateObj.toLocaleDateString()} at ${dateObj.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`;
 
-  
   if (elSelectAllHistoryCheckbox) {
     elSelectAllHistoryCheckbox.checked = false;
   }
-  
+
   elEmptyState.classList.add("hidden");
   elProjectPanel.classList.remove("hidden");
-  
+
   resetAISearchPanel();
   await loadProjectHistory(id);
 }
 
 async function handleDeleteProject(id, name) {
-  if (!confirm(`Are you sure you want to delete the project "${name}"? All associated search runs and patent data will be permanently deleted.`)) {
+  if (
+    !confirm(
+      `Are you sure you want to delete the project "${name}"? All associated search runs and patent data will be permanently deleted.`,
+    )
+  ) {
     return;
   }
   try {
     const res = await fetch(`/api/projects/${id}`, { method: "DELETE" });
     if (!res.ok) throw new Error("Failed to delete project");
-    
+
     if (state.activeProjectId === id) {
       state.activeProjectId = null;
       state.activeProjectName = "";
@@ -507,7 +540,7 @@ async function handleDeleteProject(id, name) {
       elProjectPanel.classList.add("hidden");
       elEmptyState.classList.remove("hidden");
     }
-    
+
     await loadProjects();
   } catch (err) {
     console.error("Error deleting project:", err);
@@ -546,20 +579,19 @@ function clearLiveLog() {
   elLiveLog.innerHTML = "";
   elAuditProgressBarWrap.classList.add("hidden");
   elAuditProgressBar.style.width = "0%";
-  Object.values(pills).forEach(p => p.className = "stage-pill");
-  
+  Object.values(pills).forEach((p) => (p.className = "stage-pill"));
+
   // Reset Novelty Dashboard
   if (elNoveltyResultsPanel) elNoveltyResultsPanel.classList.add("hidden");
   if (elNoveltyListRed) elNoveltyListRed.innerHTML = "";
   if (elNoveltyListYellow) elNoveltyListYellow.innerHTML = "";
   if (elNoveltyListGreen) elNoveltyListGreen.innerHTML = "";
-  if (elBtnLiveAudit) elBtnLiveAudit.classList.add("hidden");
 }
 
 // ── Manual Scrape Flow ──────────────────────────────────────────────────────
 async function handleManualScrapeSubmit(e) {
   e.preventDefault();
-  
+
   if (!state.activeProjectId) {
     alert("Please select or create a project first.");
     return;
@@ -568,6 +600,7 @@ async function handleManualScrapeSubmit(e) {
   const activeSource = state.searchSources[0] || "google";
   let keywords = "";
   let maxResults = parseInt(elLimitInputManual.value, 10);
+  let indiaRows = [];
 
   if (activeSource === "google") {
     keywords = elKeywordsInput.value.trim();
@@ -577,34 +610,35 @@ async function handleManualScrapeSubmit(e) {
     }
   } else {
     // Collect rows from manual panel query builder
-    const rows = [];
     if (elManualIndiaQueryRowsContainer) {
-      elManualIndiaQueryRowsContainer.querySelectorAll(".india-query-row").forEach(rowDiv => {
-        const field = rowDiv.querySelector(".row-field").value;
-        const text = rowDiv.querySelector(".row-text").value.trim();
-        const logic = rowDiv.querySelector(".row-logic").value;
-        rows.push({ field, text, logic });
-      });
+      elManualIndiaQueryRowsContainer
+        .querySelectorAll(".india-query-row")
+        .forEach((rowDiv) => {
+          const field = rowDiv.querySelector(".row-field").value;
+          const text = rowDiv.querySelector(".row-text").value.trim();
+          const logic = rowDiv.querySelector(".row-logic").value;
+          indiaRows.push({ field, text, logic });
+        });
     }
 
-    if (rows.length === 0 || rows.every(r => !r.text)) {
+    if (indiaRows.length === 0 || indiaRows.every((r) => !r.text)) {
       alert("Please provide at least one query search term.");
       return;
     }
 
     // Save rows into state.indiaOptions and localStorage
-    state.indiaOptions.rows = rows;
+    state.indiaOptions.rows = indiaRows;
     localStorage.setItem("indiaOptions", JSON.stringify(state.indiaOptions));
 
     // Construct human-readable combined query string
     // Note: do NOT wrap text in extra quotes — the user may have already added their own
     let queryStr = "";
-    for (let i = 0; i < rows.length; i++) {
-      if (!rows[i].text) continue;
+    for (let i = 0; i < indiaRows.length; i++) {
+      if (!indiaRows[i].text) continue;
       if (queryStr) {
-        queryStr += ` ${rows[i].logic} `;
+        queryStr += ` ${indiaRows[i].logic} `;
       }
-      queryStr += `${rows[i].field}: ${rows[i].text}`;
+      queryStr += `${indiaRows[i].field}: ${indiaRows[i].text}`;
     }
     keywords = queryStr;
   }
@@ -615,11 +649,14 @@ async function handleManualScrapeSubmit(e) {
     elBtnTerminateScrape.disabled = false;
     elBtnTerminateScrape.innerText = "Stop";
   }
-  
+
   // Reuse Live Log UI to show progress for manual scrapes too
   elLiveFeed.classList.remove("hidden");
   clearLiveLog();
-  writeLogLine(`🚀 Initializing manual keyword search across ${getSourceLabel()}...`, "info");
+  writeLogLine(
+    `🚀 Initializing manual keyword search across ${getSourceLabel()}...`,
+    "info",
+  );
   initStagePillsForFlow("manual_scrape");
   updateStagePill("planning", "active");
 
@@ -627,24 +664,40 @@ async function handleManualScrapeSubmit(e) {
     // For logging, we show the search terms
     let displayList = [keywords];
     if (activeSource === "google") {
-      displayList = keywords.split(",").map(k => k.trim()).filter(Boolean);
-    } else if (rows && rows.some(r => r.text && r.text.includes(","))) {
-      const splitRows = rows.map(r => (r.text || "").split(",").map(t => t.trim()).filter(Boolean));
-      const maxTerms = Math.max(...splitRows.map(r => r.length));
+      displayList = keywords
+        .split(",")
+        .map((k) => k.trim())
+        .filter(Boolean);
+    } else if (
+      indiaRows.length > 0 &&
+      indiaRows.some((r) => r.text && r.text.includes(","))
+    ) {
+      const splitRows = indiaRows.map((r) =>
+        (r.text || "")
+          .split(",")
+          .map((t) => t.trim())
+          .filter(Boolean),
+      );
+      const maxTerms = Math.max(...splitRows.map((r) => r.length));
       displayList = [];
       for (let i = 0; i < maxTerms; i++) {
         let parts = [];
-        for (let idx = 0; idx < rows.length; idx++) {
+        for (let idx = 0; idx < indiaRows.length; idx++) {
           const terms = splitRows[idx];
-          const term = i < terms.length ? terms[i] : (terms[terms.length - 1] || "");
+          const term =
+            i < terms.length ? terms[i] : terms[terms.length - 1] || "";
           if (!term) continue;
           let textVal = term;
-          if (textVal.includes(" ") || textVal.toUpperCase().includes(" AND ") || textVal.toUpperCase().includes(" OR ")) {
+          if (
+            textVal.includes(" ") ||
+            textVal.toUpperCase().includes(" AND ") ||
+            textVal.toUpperCase().includes(" OR ")
+          ) {
             textVal = `(${textVal})`;
           }
-          let part = `${rows[idx].field}: ${textVal}`;
+          let part = `${indiaRows[idx].field}: ${textVal}`;
           if (idx > 0) {
-            parts.push(`${rows[idx - 1].logic} ${part}`);
+            parts.push(`${indiaRows[idx - 1].logic} ${part}`);
           } else {
             parts.push(part);
           }
@@ -659,7 +712,10 @@ async function handleManualScrapeSubmit(e) {
 
     for (let i = 0; i < displayList.length; i++) {
       const kw = displayList[i];
-      writeLogLine(`🔍 Searching for query: "${kw}" (Batch ${i+1}/${displayList.length})`, "info");
+      writeLogLine(
+        `🔍 Searching for query: "${kw}" (Batch ${i + 1}/${displayList.length})`,
+        "info",
+      );
     }
 
     const response = await fetch("/api/scrape", {
@@ -672,8 +728,8 @@ async function handleManualScrapeSubmit(e) {
         sources: state.searchSources,
         india_options: state.indiaOptions,
         captcha_mode: state.captchaMode,
-        captcha_service: state.captchaService
-      })
+        captcha_service: state.captchaService,
+      }),
     });
 
     if (!response.ok) {
@@ -684,7 +740,10 @@ async function handleManualScrapeSubmit(e) {
     const result = await response.json();
     if (result.status === "processing") {
       state.activeTaskId = result.task_id;
-      writeLogLine(`📡 Connection established. Task ID: ${result.task_id}`, "info");
+      writeLogLine(
+        `📡 Connection established. Task ID: ${result.task_id}`,
+        "info",
+      );
       startSSEStream(result.task_id);
     } else {
       writeLogLine("💾 Search results saved successfully.", "success");
@@ -706,7 +765,6 @@ async function handleManualScrapeSubmit(e) {
     setManualLoading(false);
     if (elBtnTerminateScrape) elBtnTerminateScrape.classList.add("hidden");
   }
-
 }
 
 function setManualLoading(isLoading) {
@@ -720,7 +778,9 @@ function setManualLoading(isLoading) {
     if (elBtnManualIndiaAddRow) elBtnManualIndiaAddRow.disabled = true;
     if (elBtnManualIndiaRemoveRow) elBtnManualIndiaRemoveRow.disabled = true;
     if (elManualIndiaQueryRowsContainer) {
-      elManualIndiaQueryRowsContainer.querySelectorAll("input, select, button").forEach(el => el.disabled = true);
+      elManualIndiaQueryRowsContainer
+        .querySelectorAll("input, select, button")
+        .forEach((el) => (el.disabled = true));
     }
   } else {
     elBtnManualScrape.disabled = false;
@@ -732,7 +792,9 @@ function setManualLoading(isLoading) {
     if (elBtnManualIndiaAddRow) elBtnManualIndiaAddRow.disabled = false;
     if (elBtnManualIndiaRemoveRow) elBtnManualIndiaRemoveRow.disabled = false;
     if (elManualIndiaQueryRowsContainer) {
-      elManualIndiaQueryRowsContainer.querySelectorAll("input, select, button").forEach(el => el.disabled = false);
+      elManualIndiaQueryRowsContainer
+        .querySelectorAll("input, select, button")
+        .forEach((el) => (el.disabled = false));
     }
   }
 }
@@ -745,7 +807,9 @@ async function handleGenerateQueries() {
     return;
   }
   if (requirement.length < 30) {
-    alert("Requirement too short. Please provide a more descriptive mechanism (minimum 30 characters).");
+    alert(
+      "Requirement too short. Please provide a more descriptive mechanism (minimum 30 characters).",
+    );
     return;
   }
 
@@ -755,7 +819,7 @@ async function handleGenerateQueries() {
     const res = await fetch("/api/ai/generate-queries", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ requirement })
+      body: JSON.stringify({ requirement }),
     });
 
     if (!res.ok) {
@@ -792,7 +856,7 @@ function setGenerateLoading(isLoading) {
 function renderQueryReviewPanel(strategy) {
   elAiRationale.innerText = strategy.search_rationale || "";
   elEditableQueries.innerHTML = "";
-  
+
   strategy.keyword_queries.forEach((q, idx) => {
     const row = document.createElement("div");
     row.className = "query-edit-row";
@@ -809,7 +873,7 @@ function renderQueryReviewPanel(strategy) {
   });
 
   elCpcTags.innerHTML = "";
-  strategy.suggested_cpc_codes.forEach(cpc => {
+  strategy.suggested_cpc_codes.forEach((cpc) => {
     const tag = document.createElement("span");
     tag.className = "cpc-tag-pill";
     tag.innerText = cpc;
@@ -823,22 +887,29 @@ function renderQueryReviewPanel(strategy) {
 // ── AI Scrape Step 2: Confirm & Stream Search ───────────────────────────────
 async function handleConfirmSearch() {
   const queryInputs = elEditableQueries.querySelectorAll(".query-edit-input");
-  const queries = Array.from(queryInputs).map(inp => inp.value.trim()).filter(Boolean);
-  
+  const queries = Array.from(queryInputs)
+    .map((inp) => inp.value.trim())
+    .filter(Boolean);
+
   if (queries.length === 0) {
     alert("Please configure at least one query to search.");
     return;
   }
 
-  const cpcs = Array.from(elCpcTags.querySelectorAll(".cpc-tag-pill")).map(pill => pill.innerText);
+  const cpcs = Array.from(elCpcTags.querySelectorAll(".cpc-tag-pill")).map(
+    (pill) => pill.innerText,
+  );
   const requirement = elRequirementInput.value.trim();
   const maxResults = parseInt(elLimitInputAi.value, 10);
-  state.activeRequirement = requirement;  // store for re-audit
+  state.activeRequirement = requirement; // store for re-audit
 
   setConfirmLoading(true);
   elLiveFeed.classList.remove("hidden");
   clearLiveLog();
-  writeLogLine("🚀 Submitting pipeline execution request to backend...", "info");
+  writeLogLine(
+    "🚀 Submitting pipeline execution request to backend...",
+    "info",
+  );
   initStagePillsForFlow("ai_search");
 
   try {
@@ -856,8 +927,8 @@ async function handleConfirmSearch() {
         sources: state.searchSources,
         india_options: state.indiaOptions,
         captcha_mode: state.captchaMode,
-        captcha_service: state.captchaService
-      })
+        captcha_service: state.captchaService,
+      }),
     });
 
     if (!res.ok) {
@@ -869,7 +940,6 @@ async function handleConfirmSearch() {
     state.activeTaskId = task_id;
     writeLogLine(`📡 Connection established. Task ID: ${task_id}`, "info");
     startSSEStream(task_id);
-
   } catch (err) {
     writeLogLine(`❌ Failed to start background task: ${err.message}`, "error");
     setConfirmLoading(false);
@@ -892,17 +962,17 @@ function setConfirmLoading(isLoading) {
 function initStagePillsForFlow(flowName) {
   state.activeFlow = flowName;
   const stages = ["planning", "scraping", "auditing", "saving", "complete"];
-  
+
   // Define which stages are active/used in each flow
   const flows = {
     manual_scrape: ["planning", "scraping", "saving", "complete"],
     ai_search: ["planning", "scraping", "saving", "complete"],
-    ai_audit: ["auditing", "complete"]
+    ai_audit: ["auditing", "complete"],
   };
-  
+
   const activeStages = flows[flowName] || [];
-  
-  stages.forEach(s => {
+
+  stages.forEach((s) => {
     if (activeStages.includes(s)) {
       updateStagePill(s, "waiting");
     } else {
@@ -926,9 +996,20 @@ function startSSEStream(taskId) {
 
   eventSource.onerror = (err) => {
     console.error("SSE Connection error:", err);
-    writeLogLine("⚠️ EventStream disconnected. Checking task completion status...", "warning");
+    writeLogLine(
+      "⚠️ EventStream disconnected. Checking task completion status...",
+      "warning",
+    );
     eventSource.close();
     setPipelineLoading(false);
+    if (elBtnGlobalAiAudit) {
+      elBtnGlobalAiAudit.disabled = false;
+      elBtnGlobalAiAudit.textContent = "AI Audit";
+    }
+    if (elBtnGlobalDeepScrape) {
+      elBtnGlobalDeepScrape.disabled = false;
+      elBtnGlobalDeepScrape.textContent = "Deep scrape";
+    }
   };
 }
 
@@ -947,21 +1028,31 @@ function setPipelineLoading(isLoading) {
 
 function handleSSEStageUpdate(data, taskId) {
   const { stage, message, current, total } = data;
-  
+
+  if (data.reset_pipeline) {
+    initStagePillsForFlow(state.activeFlow || "manual_scrape");
+  }
+
   if (stage) {
-    const stagesOrder = ["planning", "scraping", "auditing", "saving", "complete"];
+    const stagesOrder = [
+      "planning",
+      "scraping",
+      "auditing",
+      "saving",
+      "complete",
+    ];
     const currentIdx = stagesOrder.indexOf(stage);
-    
+
     updateStagePill(stage, "active");
-    
+
     // Set all previous stages that are part of the active flow to "done"
     const flows = {
       manual_scrape: ["planning", "scraping", "saving", "complete"],
       ai_search: ["planning", "scraping", "saving", "complete"],
-      ai_audit: ["auditing", "complete"]
+      ai_audit: ["auditing", "complete"],
     };
     const activeStages = flows[state.activeFlow] || [];
-    
+
     if (currentIdx !== -1) {
       for (let i = 0; i < currentIdx; i++) {
         const prevStage = stagesOrder[i];
@@ -983,14 +1074,18 @@ function handleSSEStageUpdate(data, taskId) {
 
   // Render the CAPTCHA image inside the live log console if provided
   if (data.captcha_image) {
-    const time = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+    const time = new Date().toLocaleTimeString([], {
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
+    });
     const line = document.createElement("div");
     line.className = "log-line log-info flex flex-col gap-1 my-2";
-    
+
     const labelSpan = document.createElement("span");
     labelSpan.className = "log-text text-xs text-slate-400";
     labelSpan.innerHTML = `<span class="log-time">[${time}]</span> Captured CAPTCHA Image:`;
-    
+
     const imgEl = document.createElement("img");
     imgEl.src = data.captcha_image;
     imgEl.style.display = "block";
@@ -1002,7 +1097,7 @@ function handleSSEStageUpdate(data, taskId) {
     imgEl.style.maxWidth = "200px";
     imgEl.style.background = "#fff";
     imgEl.style.padding = "2px";
-    
+
     line.appendChild(labelSpan);
     line.appendChild(imgEl);
     elLiveLog.appendChild(line);
@@ -1018,7 +1113,12 @@ function handleSSEStageUpdate(data, taskId) {
       elCaptchaInput.focus();
       state.activeCaptchaTaskId = taskId;
     }
-  } else if (stage === "complete" || stage === "error" || stage === "saving" || stage === "auditing") {
+  } else if (
+    stage === "complete" ||
+    stage === "error" ||
+    stage === "saving" ||
+    stage === "auditing"
+  ) {
     // If we transition to end stages, hide the captcha modal
     elModalCaptcha.classList.add("hidden");
   }
@@ -1033,7 +1133,11 @@ function handleSSEStageUpdate(data, taskId) {
     elAuditProgressBar.style.width = `${percentage}%`;
     // Live-update individual patent card if patent_id is in the event
     if (data.patent_id && data.relevance_category) {
-      updatePatentCardRelevancy(data.patent_id, data.relevance_category, data.confidence_score);
+      updatePatentCardRelevancy(
+        data.patent_id,
+        data.relevance_category,
+        data.confidence_score,
+      );
       // Populate novelty live dashboard
       addPatentToNoveltyDashboard(data);
     }
@@ -1043,15 +1147,22 @@ function handleSSEStageUpdate(data, taskId) {
     const flows = {
       manual_scrape: ["planning", "scraping", "saving", "complete"],
       ai_search: ["planning", "scraping", "saving", "complete"],
-      ai_audit: ["auditing", "complete"]
+      ai_audit: ["auditing", "complete"],
     };
     const activeStages = flows[state.activeFlow] || [];
-    activeStages.forEach(s => {
+    activeStages.forEach((s) => {
       updateStagePill(s, "done");
     });
 
-    if (data.terminated && data.remaining_keywords && data.remaining_keywords.length > 0) {
-      writeLogLine(`⛔ Scrape terminated. Loaded ${data.remaining_keywords.length} remaining keywords back into input.`, "warning");
+    if (
+      data.terminated &&
+      data.remaining_keywords &&
+      data.remaining_keywords.length > 0
+    ) {
+      writeLogLine(
+        `⛔ Scrape terminated. Loaded ${data.remaining_keywords.length} remaining keywords back into input.`,
+        "warning",
+      );
       elKeywordsInput.value = data.remaining_keywords.join(", ");
       switchSearchMode("manual");
     } else {
@@ -1062,41 +1173,53 @@ function handleSSEStageUpdate(data, taskId) {
         writeLogLine("🎉 Agent Pipeline Finished Successfully!", "success");
       }
     }
-    
+
     // Save last scraped search run information & show AI audit option if scraping finished
-    if (state.activeFlow === "manual_scrape" && data.scraped && data.scraped.length > 0) {
-      const validRuns = data.scraped.filter(run => run.search_id);
+    if (
+      state.activeFlow === "manual_scrape" &&
+      data.scraped &&
+      data.scraped.length > 0
+    ) {
+      const validRuns = data.scraped.filter((run) => run.search_id);
       if (validRuns.length > 0) {
         state.lastScrapedSearchId = validRuns[validRuns.length - 1].search_id;
-        state.lastScrapedKeywords = validRuns.map(r => r.keyword).join(", ");
-        const manualDesc = elManualDescriptionInput ? elManualDescriptionInput.value.trim() : "";
+        state.lastScrapedKeywords = validRuns.map((r) => r.keyword).join(", ");
+        const manualDesc = elManualDescriptionInput
+          ? elManualDescriptionInput.value.trim()
+          : "";
         state.activeRequirement = manualDesc || state.lastScrapedKeywords;
-        if (elBtnLiveAudit) {
-          elBtnLiveAudit.classList.remove("hidden");
-        }
-        writeLogLine("💡 Scraping complete. Click 'AI Audit Scraped' in the log header to audit target patents.", "info");
+        writeLogLine(
+          "Scraping complete. Select patents in Scraped History, then use the toolbar AI Audit button.",
+          "info",
+        );
       }
-    } else if (state.activeFlow === "ai_search" && data.scraped_count !== undefined) {
+    } else if (
+      state.activeFlow === "ai_search" &&
+      data.scraped_count !== undefined
+    ) {
       state.lastScrapedSearchId = data.search_id;
       state.lastScrapedKeywords = elRequirementInput.value.trim() || "";
       state.activeRequirement = state.lastScrapedKeywords;
-      if (elBtnLiveAudit) {
-        elBtnLiveAudit.classList.remove("hidden");
-      }
-      writeLogLine("💡 Scraping complete. Click 'AI Audit Scraped' in the log header to audit target patents.", "info");
+      writeLogLine(
+        "Scraping complete. Select patents in Scraped History, then use the toolbar AI Audit button.",
+        "info",
+      );
     } else if (state.activeFlow === "ai_audit") {
-      writeLogLine("💡 Relevance assessment completed. Study the Novelty & Relevancy Dashboard below.", "info");
+      writeLogLine(
+        "💡 Relevance assessment completed. Study the Novelty & Relevancy Dashboard below.",
+        "info",
+      );
     }
 
     setPipelineLoading(false);
-    
+
     if (state.activeFlow === "ai_search") {
       // Automatically transition back to requirement input for AI flows
       setTimeout(() => {
         resetAISearchPanel();
       }, 4000);
     }
-    
+
     if (data.data) {
       renderHistory(data.data);
     }
@@ -1106,6 +1229,14 @@ function handleSSEStageUpdate(data, taskId) {
     updateStagePill("complete", "error");
     writeLogLine(`❌ Critical Pipeline Error: ${message}`, "error");
     setPipelineLoading(false);
+    if (elBtnGlobalAiAudit) {
+      elBtnGlobalAiAudit.disabled = false;
+      elBtnGlobalAiAudit.textContent = "AI Audit";
+    }
+    if (elBtnGlobalDeepScrape) {
+      elBtnGlobalDeepScrape.disabled = false;
+      elBtnGlobalDeepScrape.textContent = "Deep scrape";
+    }
     alert(`Pipeline Error: ${message}`);
   }
 }
@@ -1169,8 +1300,8 @@ function addPatentToNoveltyDashboard(patent) {
   card.className = "novelty-card";
   card.innerHTML = `
     <div class="novelty-card-header">
-      <a href="${escapeHtml(patent.patent_url || '#')}" target="_blank" class="novelty-link">
-        ${escapeHtml(patent.patent_code || 'Patent')}
+      <a href="${escapeHtml(patent.patent_url || "#")}" target="_blank" class="novelty-link">
+        ${escapeHtml(patent.patent_code || "Patent")}
         <svg style="width:10px;height:10px;margin-left:2px;" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6M15 3h6v6M10 14L21 3"/></svg>
       </a>
       <span class="novelty-score-badge novelty-score-badge--${badgeClass}">${badgeText}</span>
@@ -1192,7 +1323,7 @@ function addPatentToNoveltyDashboard(patent) {
   `;
 
   listEl.appendChild(card);
-  
+
   // Auto-scroll list to bottom as new items show up
   listEl.scrollTop = listEl.scrollHeight;
 }
@@ -1204,9 +1335,12 @@ function updateStagePill(stage, status) {
   pill.className = `stage-pill ${status}`;
 }
 
-
 function writeLogLine(text, type = "info") {
-  const time = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+  const time = new Date().toLocaleTimeString([], {
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+  });
   const line = document.createElement("div");
   line.className = `log-line log-${type}`;
   line.innerHTML = `<span class="log-time">[${time}]</span> <span class="log-text">${escapeHtml(text)}</span>`;
@@ -1228,8 +1362,11 @@ async function loadProjectHistory(projectId) {
 
 function renderHistory(searches) {
   elHistoryContainer.innerHTML = "";
+  state.historySearches = searches || [];
 
-  const activeSearches = (searches || []).filter(s => s.search_mode !== "failed");
+  const activeSearches = (searches || []).filter(
+    (s) => s.search_mode !== "failed",
+  );
 
   if (activeSearches.length === 0) {
     elHistoryContainer.innerHTML = `
@@ -1240,25 +1377,26 @@ function renderHistory(searches) {
     return;
   }
 
-  activeSearches.forEach(s => {
+  activeSearches.forEach((s) => {
     const card = document.createElement("div");
     card.className = "query-card";
     card.id = `query-card-${s.id}`;
-    
-    const dateStr = parseUtcDate(s.created_at).toLocaleString([], { dateStyle: 'short', timeStyle: 'short' });
-    const isAi = s.search_mode === "ai";
 
+    const dateStr = parseUtcDate(s.created_at).toLocaleString([], {
+      dateStyle: "short",
+      timeStyle: "short",
+    });
+    const isAi = s.search_mode === "ai";
 
     card.innerHTML = `
       <div class="query-card-header">
         <div class="query-title-info">
           <input type="checkbox" class="keyword-select-checkbox" data-search-id="${s.id}" title="Select all patents in this group">
-          <span class="query-tag ${isAi ? 'ai-tag' : 'manual-tag'}">${isAi ? 'AI Pipeline' : 'Keyword'}</span>
+          <span class="query-tag ${isAi ? "ai-tag" : "manual-tag"}">${isAi ? "AI Pipeline" : "Keyword"}</span>
           <span class="query-text" title="${escapeHtml(s.query)}">${escapeHtml(s.query)}</span>
           <span class="meta-text">${dateStr}</span>
         </div>
         <div class="query-actions-wrapper">
-          <button type="button" class="btn-ai-audit-trigger" data-search-id="${s.id}" title="Audit these patents with Gemini">AI Audit</button>
           <button type="button" class="btn-icon toggle-expand-btn" aria-label="Toggle accordion">
             <svg class="icon chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
               <polyline points="6 9 12 15 18 9"></polyline>
@@ -1267,7 +1405,7 @@ function renderHistory(searches) {
         </div>
       </div>
       <div class="query-card-body">
-        ${isAi ? renderAiSearchMeta(s) : ''}
+        ${isAi ? renderAiSearchMeta(s) : ""}
         <div class="patent-list">
           ${renderPatentCards(s.patents, s.query, s.id)}
         </div>
@@ -1278,7 +1416,7 @@ function renderHistory(searches) {
     headerCheckbox.addEventListener("click", (e) => {
       e.stopPropagation();
       const isChecked = headerCheckbox.checked;
-      card.querySelectorAll(".patent-select-checkbox").forEach(cb => {
+      card.querySelectorAll(".patent-select-checkbox").forEach((cb) => {
         cb.checked = isChecked;
         // trigger handler to enforce active filter validation if user manually selects all
         if (isChecked) handlePatentCheckboxChange(cb);
@@ -1287,27 +1425,41 @@ function renderHistory(searches) {
     });
 
     const childCheckboxes = card.querySelectorAll(".patent-select-checkbox");
-    childCheckboxes.forEach(cb => {
+    childCheckboxes.forEach((cb) => {
       cb.addEventListener("change", () => {
-        const allChecked = Array.from(childCheckboxes).every(c => c.checked);
+        const allChecked = Array.from(childCheckboxes).every((c) => c.checked);
         headerCheckbox.checked = allChecked;
         updateGlobalSelectAllState();
       });
     });
 
-    // Audit button click handler
-    const btnAudit = card.querySelector(".btn-ai-audit-trigger");
-    if (btnAudit) {
-      btnAudit.addEventListener("click", (e) => {
+    card.querySelectorAll(".btn-card-deep-scrape").forEach((btn) => {
+      btn.addEventListener("click", (e) => {
         e.stopPropagation();
-        triggerAudit(s.id, s.query);
+        triggerDeepScrape([parseInt(btn.dataset.patentId, 10)]);
       });
-    }
+    });
+
+    card.querySelectorAll(".patent-card").forEach((patentCard) => {
+      patentCard.addEventListener("click", (e) => {
+        if (
+          e.target.closest(".patent-select-checkbox") ||
+          e.target.closest(".patent-id-badge") ||
+          e.target.closest(".btn-card-deep-scrape")
+        ) {
+          return;
+        }
+        openPatentDetails(parseInt(patentCard.dataset.patentId, 10));
+      });
+    });
 
     card.querySelector(".query-card-header").addEventListener("click", (e) => {
-      if (e.target.closest(".keyword-select-checkbox") || e.target.closest(".btn-ai-audit-trigger")) return;
+      if (e.target.closest(".keyword-select-checkbox"))
+        return;
       const isOpen = card.classList.toggle("open");
-      card.querySelector(".chevron").style.transform = isOpen ? "rotate(180deg)" : "rotate(0deg)";
+      card.querySelector(".chevron").style.transform = isOpen
+        ? "rotate(180deg)"
+        : "rotate(0deg)";
     });
 
     elHistoryContainer.appendChild(card);
@@ -1322,20 +1474,24 @@ function renderAiSearchMeta(s) {
       <div class="ai-meta-row">
         <strong>Generated Search Queries:</strong>
         <div class="ai-meta-pills">
-          ${queries.map(q => `<span class="ai-meta-pill-query">${escapeHtml(q)}</span>`).join('')}
+          ${queries.map((q) => `<span class="ai-meta-pill-query">${escapeHtml(q)}</span>`).join("")}
         </div>
       </div>
       <div class="ai-meta-row">
         <strong>Suggested CPC Codes:</strong>
         <div class="ai-meta-pills">
-          ${cpc.map(c => `<span class="cpc-tag-pill">${escapeHtml(c)}</span>`).join('')}
+          ${cpc.map((c) => `<span class="cpc-tag-pill">${escapeHtml(c)}</span>`).join("")}
         </div>
       </div>
-      ${s.ai_rationale ? `
+      ${
+        s.ai_rationale
+          ? `
       <div class="ai-meta-row">
         <strong>Search Rationale:</strong>
         <p class="ai-rationale-display">${escapeHtml(s.ai_rationale)}</p>
-      </div>` : ''}
+      </div>`
+          : ""
+      }
     </div>
   `;
 }
@@ -1345,55 +1501,62 @@ function renderPatentCards(patents, query, searchId) {
     return `<div class="meta-text" style="text-align: center; padding: 20px;">No patents matched this criteria.</div>`;
   }
 
-  const terms = query.split(/\s+/).map(t => escapeRegExp(t)).filter(t => t.length > 2);
+  const terms = query
+    .split(/\s+/)
+    .map((t) => escapeRegExp(t))
+    .filter((t) => t.length > 2);
   const highlight = (text) => {
     if (terms.length === 0) return escapeHtml(text);
     const regex = new RegExp(`(${terms.join("|")})`, "gi");
-    return escapeHtml(text).replace(regex, `<mark class="term-highlight">$1</mark>`);
+    return escapeHtml(text).replace(
+      regex,
+      `<mark class="term-highlight">$1</mark>`,
+    );
   };
 
-  return patents.map(p => {
-    const score = p.confidence_score;
-    const relevancy = scoreToRelevancy(score);
-    const cardClass = `patent-card relevancy-${relevancy.toLowerCase()}`;
-    const source = p.source || "Google Patents";
+  return patents
+    .map((p) => {
+      const score = p.confidence_score;
+      const relevancy = scoreToRelevancy(score);
+      const cardClass = `patent-card relevancy-${relevancy.toLowerCase()}`;
+      const isDeepScraped = Boolean(p.deep_scrape_text);
 
-    // Build structured reasoning HTML
-    let reasoningHtml = '';
-    const hasOverlap = p.overlap_reasons && p.overlap_reasons.trim();
-    const hasDifference = p.difference_reasons && p.difference_reasons.trim();
-    const hasBasicReasoning = p.ai_reasoning && p.ai_reasoning.trim();
+      // Build structured reasoning HTML
+      let reasoningHtml = "";
+      const hasOverlap = p.overlap_reasons && p.overlap_reasons.trim();
+      const hasDifference = p.difference_reasons && p.difference_reasons.trim();
+      const hasBasicReasoning = p.ai_reasoning && p.ai_reasoning.trim();
 
-    if (hasBasicReasoning || hasOverlap || hasDifference) {
-      reasoningHtml = `<div class="ai-reasoning-callout">`;
-      
-      if (hasBasicReasoning) {
-        reasoningHtml += `
+      if (hasBasicReasoning || hasOverlap || hasDifference) {
+        reasoningHtml = `<div class="ai-reasoning-callout">`;
+
+        if (hasBasicReasoning) {
+          reasoningHtml += `
           <div class="reasoning-header">🤖 Gemini Assessment</div>
           <div style="color: var(--text-secondary); font-style: italic;">${escapeHtml(p.ai_reasoning)}</div>`;
-      }
+        }
 
-      if (hasOverlap) {
-        reasoningHtml += `
+        if (hasOverlap) {
+          reasoningHtml += `
           <div class="ai-reasoning-section overlap-section">
             <div class="section-label">🔴 Why It Overlaps With Your Invention</div>
             <div class="section-text">${escapeHtml(p.overlap_reasons)}</div>
           </div>`;
-      }
+        }
 
-      if (hasDifference) {
-        reasoningHtml += `
+        if (hasDifference) {
+          reasoningHtml += `
           <div class="ai-reasoning-section difference-section">
             <div class="section-label">🟢 How Your Invention Differs</div>
             <div class="section-text">${escapeHtml(p.difference_reasons)}</div>
           </div>`;
+        }
+
+        reasoningHtml += `</div>`;
       }
 
-      reasoningHtml += `</div>`;
-    }
-
-    return `
-      <div class="${cardClass}" id="patent-card-${p.id}" data-relevancy="${relevancy}">
+      return `
+      <div class="${cardClass}" id="patent-card-${p.id}" data-patent-id="${p.id}" data-relevancy="${relevancy}">
         <input type="checkbox" class="patent-select-checkbox" data-patent-id="${p.id}"
                data-search-id="${searchId}" data-relevancy="${relevancy}" title="Select patent"
                onchange="handlePatentCheckboxChange(this)">
@@ -1406,7 +1569,9 @@ function renderPatentCards(patents, query, searchId) {
               </a>
               <h4 class="patent-title">${highlight(p.title)}</h4>
             </div>
-            <span class="patent-source-badge">${escapeHtml(source)}</span>
+            <button type="button" class="btn-card-deep-scrape ${isDeepScraped ? "btn-card-deep-scrape--done" : "btn-card-deep-scrape--pending"}" data-patent-id="${p.id}" title="${isDeepScraped ? "Refresh deep scrape" : "Deep scrape this patent"}">
+              ${isDeepScraped ? "Deep scraped" : "Deep scrape"}
+            </button>
             <span class="relevancy-badge relevancy-badge--${relevancy.toLowerCase()}">${relevancy}</span>
           </div>
           <p class="patent-abstract">${highlight(p.abstract)}</p>
@@ -1414,13 +1579,14 @@ function renderPatentCards(patents, query, searchId) {
         </div>
       </div>
     `;
-  }).join("");
+    })
+    .join("");
 }
 
 function scoreToRelevancy(score) {
   if (score === null || score === undefined) return "Unaudited";
   if (score >= 0.75) return "Red";
-  if (score >= 0.4)  return "Yellow";
+  if (score >= 0.4) return "Yellow";
   return "Green";
 }
 
@@ -1447,9 +1613,90 @@ function handlePatentCheckboxChange(cb) {
     cb.checked = false;
     showAlertDialog(
       `This patent is marked <strong>${cardRelevancy}</strong>, which is outside your active filter.` +
-      ` Please adjust your filter or choose a patent within the selected categories.`
+        ` Please adjust your filter or choose a patent within the selected categories.`,
     );
   }
+}
+
+function findPatentById(patentId) {
+  for (const search of state.historySearches || []) {
+    for (const patent of search.patents || []) {
+      if (parseInt(patent.id, 10) === patentId) {
+        return { patent, search };
+      }
+    }
+  }
+  return null;
+}
+
+function openPatentDetails(patentId) {
+  const found = findPatentById(patentId);
+  if (!found || !elModalPatentDetails || !elPatentDetailsBody) return;
+
+  const { patent, search } = found;
+  const relevancy = scoreToRelevancy(patent.confidence_score);
+  const deepText = patent.deep_scrape_text || "";
+  const scrapedAt = patent.deep_scraped_at
+    ? parseUtcDate(patent.deep_scraped_at).toLocaleString()
+    : "";
+
+  if (elPatentDetailsTitle) {
+    elPatentDetailsTitle.textContent = patent.patent_id || "Patent Details";
+  }
+
+  elPatentDetailsBody.innerHTML = `
+    <div class="patent-detail-meta">
+      <a href="${escapeHtml(patent.url || "#")}" target="_blank" class="patent-id-badge patent-detail-id-link" title="Open patent">
+        ${escapeHtml(patent.patent_id || "Patent")}
+        <svg style="width:12px;height:12px" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6M15 3h6v6M10 14L21 3"/></svg>
+      </a>
+      <span class="relevancy-badge relevancy-badge--${relevancy.toLowerCase()}">${relevancy}</span>
+      ${scrapedAt ? `<span class="deep-scrape-status">Deep scraped: ${escapeHtml(scrapedAt)}</span>` : `<span class="deep-scrape-status muted">Not deep scraped yet</span>`}
+    </div>
+    <section class="patent-detail-section">
+      <h4>Title</h4>
+      <p>${escapeHtml(patent.title || "-")}</p>
+    </section>
+    <section class="patent-detail-section">
+      <h4>Keyword Context</h4>
+      <p>${escapeHtml(search.query || "-")}</p>
+    </section>
+    <section class="patent-detail-section">
+      <h4>Abstract</h4>
+      <p>${escapeHtml(patent.abstract || "-")}</p>
+    </section>
+    ${
+      patent.ai_reasoning
+        ? `<section class="patent-detail-section">
+            <h4>AI Audit</h4>
+            <p>${escapeHtml(patent.ai_reasoning)}</p>
+          </section>`
+        : ""
+    }
+    <section class="patent-detail-section patent-detail-deep">
+      <div class="patent-detail-section-header">
+        <h4>Deep Scraped Details</h4>
+        <button type="button" class="btn-card-deep-scrape ${deepText ? "btn-card-deep-scrape--done" : "btn-card-deep-scrape--pending"}" id="btn-modal-deep-scrape" data-patent-id="${patent.id}">
+          ${deepText ? "Refresh deep scrape" : "Deep scrape"}
+        </button>
+      </div>
+      ${
+        deepText
+          ? `<pre>${escapeHtml(deepText)}</pre>`
+          : `<p class="meta-text">No deep scrape content saved for this patent yet.</p>`
+      }
+    </section>
+  `;
+
+  const modalDeepBtn = document.getElementById("btn-modal-deep-scrape");
+  if (modalDeepBtn) {
+    modalDeepBtn.addEventListener("click", () => {
+      elModalPatentDetails.classList.add("hidden");
+      triggerDeepScrape([patent.id]);
+    });
+  }
+
+  elModalPatentDetails.classList.remove("hidden");
 }
 
 function showAlertDialog(msg) {
@@ -1473,10 +1720,12 @@ async function downloadExport(format, patentIds = null) {
     const response = await fetch(url, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body)
+      body: JSON.stringify(body),
     });
     if (!response.ok) {
-      const err = await response.json().catch(() => ({ detail: "Export failed" }));
+      const err = await response
+        .json()
+        .catch(() => ({ detail: "Export failed" }));
       throw new Error(err.detail || "Export failed");
     }
     const blob = await response.blob();
@@ -1484,7 +1733,9 @@ async function downloadExport(format, patentIds = null) {
     const a = document.createElement("a");
     a.href = downloadUrl;
     const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
-    const cleanProjName = state.activeProjectName.replace(/[^a-z0-9]/gi, "_").toLowerCase();
+    const cleanProjName = state.activeProjectName
+      .replace(/[^a-z0-9]/gi, "_")
+      .toLowerCase();
     a.download = `patentlens_${cleanProjName}_${patentIds ? "selected" : "all"}_${timestamp}.${format}`;
     document.body.appendChild(a);
     a.click();
@@ -1496,20 +1747,35 @@ async function downloadExport(format, patentIds = null) {
 }
 
 function handleGlobalExport(format) {
-  const checkedCbs = document.querySelectorAll(".patent-select-checkbox:checked");
+  const checkedCbs = document.querySelectorAll(
+    ".patent-select-checkbox:checked",
+  );
   if (checkedCbs.length > 0) {
-    const patentIds = Array.from(checkedCbs).map(cb => parseInt(cb.dataset.patentId, 10));
+    const patentIds = Array.from(checkedCbs).map((cb) =>
+      parseInt(cb.dataset.patentId, 10),
+    );
     downloadExport(format, patentIds);
   } else {
     downloadExport(format, null);
   }
 }
 
+function getSelectedPatentIds() {
+  const checkedCbs = document.querySelectorAll(
+    ".patent-select-checkbox:checked",
+  );
+  return Array.from(checkedCbs)
+    .map((cb) => parseInt(cb.dataset.patentId, 10))
+    .filter((id) => Number.isInteger(id) && id > 0);
+}
+
 // ── Settings modal ───────────────────────────────────────────────────────────
 function showSettingsModal() {
   elModalSettings.classList.remove("hidden");
   // Highlight currently selected radio button
-  const radio = elModalSettings.querySelector(`input[name="audit-mode"][value="${state.auditMode}"]`);
+  const radio = elModalSettings.querySelector(
+    `input[name="audit-mode"][value="${state.auditMode}"]`,
+  );
   if (radio) radio.checked = true;
   syncSourceCheckboxes();
 }
@@ -1528,7 +1794,10 @@ async function triggerAudit(searchId, queryText) {
   if (!state.activeProjectId) return;
   elLiveFeed.classList.remove("hidden");
   clearLiveLog();
-  writeLogLine(`🤖 Initiating Gemini audit for search run #${searchId}...`, "info");
+  writeLogLine(
+    `🤖 Initiating Gemini audit for search run #${searchId}...`,
+    "info",
+  );
   initStagePillsForFlow("ai_audit");
   updateStagePill("auditing", "active");
 
@@ -1536,7 +1805,7 @@ async function triggerAudit(searchId, queryText) {
     const res = await fetch(`/api/ai/audit/${searchId}`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ requirement: queryText || "" })
+      body: JSON.stringify({ requirement: queryText || "" }),
     });
     if (!res.ok) {
       const err = await res.json();
@@ -1544,18 +1813,144 @@ async function triggerAudit(searchId, queryText) {
     }
     const { task_id } = await res.json();
     state.activeTaskId = task_id;
-    writeLogLine(`📡 Connection established. Audit Task ID: ${task_id}`, "info");
+    writeLogLine(
+      `📡 Connection established. Audit Task ID: ${task_id}`,
+      "info",
+    );
     startSSEStream(task_id);
   } catch (err) {
     writeLogLine(`❌ Failed to start audit task: ${err.message}`, "error");
   }
 }
 
+async function triggerSelectedAudit() {
+  if (!state.activeProjectId) {
+    alert("Please select a project first.");
+    return;
+  }
+
+  const patentIds = getSelectedPatentIds();
+  if (patentIds.length === 0) {
+    alert("Select at least one patent to audit.");
+    return;
+  }
+
+  const requirement =
+    state.activeRequirement ||
+    (elManualDescriptionInput ? elManualDescriptionInput.value.trim() : "") ||
+    elRequirementInput.value.trim() ||
+    state.lastScrapedKeywords ||
+    "";
+
+  elLiveFeed.classList.remove("hidden");
+  clearLiveLog();
+  writeLogLine(
+    `🤖 Initiating Gemini audit for ${patentIds.length} selected patent${patentIds.length === 1 ? "" : "s"}...`,
+    "info",
+  );
+  initStagePillsForFlow("ai_audit");
+  updateStagePill("auditing", "active");
+
+  if (elBtnGlobalAiAudit) {
+    elBtnGlobalAiAudit.disabled = true;
+    elBtnGlobalAiAudit.textContent = "Auditing...";
+  }
+
+  try {
+    const res = await fetch("/api/ai/audit-selected", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        project_id: state.activeProjectId,
+        patent_ids: patentIds,
+        requirement,
+      }),
+    });
+    if (!res.ok) {
+      const err = await res.json();
+      throw new Error(err.detail || "Audit request rejected.");
+    }
+    const { task_id } = await res.json();
+    state.activeTaskId = task_id;
+    writeLogLine(
+      `📡 Connection established. Audit Task ID: ${task_id}`,
+      "info",
+    );
+    startSSEStream(task_id);
+  } catch (err) {
+    writeLogLine(`❌ Failed to start selected audit task: ${err.message}`, "error");
+    alert(`Could not start AI audit: ${err.message}`);
+    if (elBtnGlobalAiAudit) {
+      elBtnGlobalAiAudit.disabled = false;
+      elBtnGlobalAiAudit.textContent = "AI Audit";
+    }
+  }
+}
+
+async function triggerDeepScrape(patentIdsOverride = null) {
+  if (!state.activeProjectId) {
+    alert("Please select a project first.");
+    return;
+  }
+
+  const patentIds = patentIdsOverride || getSelectedPatentIds();
+  if (patentIds.length === 0) {
+    alert("Select at least one patent to deep scrape.");
+    return;
+  }
+
+  elLiveFeed.classList.remove("hidden");
+  clearLiveLog();
+  writeLogLine(
+    `Starting deep scrape for ${patentIds.length} selected patent${patentIds.length === 1 ? "" : "s"}...`,
+    "info",
+  );
+  initStagePillsForFlow("manual_scrape");
+  updateStagePill("scraping", "active");
+
+  if (elBtnGlobalDeepScrape) {
+    elBtnGlobalDeepScrape.disabled = true;
+    elBtnGlobalDeepScrape.textContent = "Scraping...";
+  }
+
+  try {
+    const res = await fetch("/api/deep-scrape", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        project_id: state.activeProjectId,
+        patent_ids: patentIds,
+      }),
+    });
+    if (!res.ok) {
+      const err = await res.json();
+      throw new Error(err.detail || "Deep scrape request rejected.");
+    }
+    const { task_id } = await res.json();
+    state.activeTaskId = task_id;
+    writeLogLine(
+      `Connection established. Deep scrape Task ID: ${task_id}`,
+      "info",
+    );
+    startSSEStream(task_id);
+  } catch (err) {
+    writeLogLine(`Deep scrape failed to start: ${err.message}`, "error");
+    alert(`Could not start deep scrape: ${err.message}`);
+    if (elBtnGlobalDeepScrape) {
+      elBtnGlobalDeepScrape.disabled = false;
+      elBtnGlobalDeepScrape.textContent = "Deep scrape";
+    }
+  }
+}
 
 // ── Saved Search Strategies Modal ────────────────────────────────────────────
 function parseUtcDate(dateStr) {
   if (!dateStr) return new Date();
-  if (dateStr.includes("Z") || dateStr.includes("+") || dateStr.includes("-") && dateStr.length > 10 && dateStr.includes("T")) {
+  if (
+    dateStr.includes("Z") ||
+    dateStr.includes("+") ||
+    (dateStr.includes("-") && dateStr.length > 10 && dateStr.includes("T"))
+  ) {
     return new Date(dateStr);
   }
   return new Date(dateStr + " UTC");
@@ -1566,10 +1961,13 @@ function createStrategyItemElement(s) {
   div.className = "saved-keyword-item";
   const isAi = s.search_mode === "ai";
   const isFailed = s.search_mode === "failed";
-  
+
   const dateObj = parseUtcDate(s.created_at);
-  const dateStr = dateObj.toLocaleDateString() + ", " + dateObj.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-  
+  const dateStr =
+    dateObj.toLocaleDateString() +
+    ", " +
+    dateObj.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+
   let tagClass = "manual-tag";
   let tagText = "Manual";
   if (isAi) {
@@ -1612,23 +2010,25 @@ async function showSavedKeywordsModal() {
     alert("Please select a project first.");
     return;
   }
-  elSavedKeywordsList.innerHTML = '<p class="meta-text">Loading saved searches...</p>';
+  elSavedKeywordsList.innerHTML =
+    '<p class="meta-text">Loading saved searches...</p>';
   elModalSavedKeywords.classList.remove("hidden");
 
   try {
     const res = await fetch(`/api/projects/${state.activeProjectId}/data`);
     if (!res.ok) throw new Error("Failed to load project details");
     const searches = await res.json();
-    
+
     elSavedKeywordsList.innerHTML = "";
     if (searches.length === 0) {
-      elSavedKeywordsList.innerHTML = '<p class="meta-text">No saved searches for this project yet.</p>';
+      elSavedKeywordsList.innerHTML =
+        '<p class="meta-text">No saved searches for this project yet.</p>';
       return;
     }
 
     // Divide into scraped vs failed/remaining
-    const scrapedList = searches.filter(s => s.search_mode !== "failed");
-    const failedList = searches.filter(s => s.search_mode === "failed");
+    const scrapedList = searches.filter((s) => s.search_mode !== "failed");
+    const failedList = searches.filter((s) => s.search_mode === "failed");
 
     // Helper to build a section with a select-all checkbox and Load Selected button
     function createSection(titleText, items, isFailedSection) {
@@ -1664,7 +2064,9 @@ async function showSavedKeywordsModal() {
       titleEl.style.margin = "0";
       titleEl.style.fontSize = "0.85rem";
       titleEl.style.textTransform = "uppercase";
-      titleEl.style.color = isFailedSection ? "#f59e0b" : "var(--text-secondary)";
+      titleEl.style.color = isFailedSection
+        ? "#f59e0b"
+        : "var(--text-secondary)";
       titleEl.innerText = titleText;
 
       leftSide.appendChild(selectAllCb);
@@ -1688,44 +2090,52 @@ async function showSavedKeywordsModal() {
       section.appendChild(container);
 
       if (items.length === 0) {
-        container.innerHTML = isFailedSection 
+        container.innerHTML = isFailedSection
           ? '<p class="meta-text">No failed or remaining keywords recorded.</p>'
           : '<p class="meta-text">No successfully scraped keywords yet.</p>';
         selectAllCb.disabled = true;
         loadSelectedBtn.disabled = true;
         loadSelectedBtn.style.opacity = "0.5";
       } else {
-        items.forEach(s => {
+        items.forEach((s) => {
           const div = createStrategyItemElement(s);
           container.appendChild(div);
         });
 
         // Set up Event Listeners
         selectAllCb.addEventListener("change", () => {
-          const checkboxes = container.querySelectorAll(".strategy-item-checkbox");
-          checkboxes.forEach(cb => {
+          const checkboxes = container.querySelectorAll(
+            ".strategy-item-checkbox",
+          );
+          checkboxes.forEach((cb) => {
             cb.checked = selectAllCb.checked;
           });
         });
 
         container.addEventListener("change", (e) => {
           if (e.target.classList.contains("strategy-item-checkbox")) {
-            const checkboxes = Array.from(container.querySelectorAll(".strategy-item-checkbox"));
-            const allChecked = checkboxes.every(cb => cb.checked);
+            const checkboxes = Array.from(
+              container.querySelectorAll(".strategy-item-checkbox"),
+            );
+            const allChecked = checkboxes.every((cb) => cb.checked);
             selectAllCb.checked = allChecked;
           }
         });
 
         loadSelectedBtn.addEventListener("click", () => {
-          const checkedCbs = Array.from(container.querySelectorAll(".strategy-item-checkbox:checked"));
+          const checkedCbs = Array.from(
+            container.querySelectorAll(".strategy-item-checkbox:checked"),
+          );
           if (checkedCbs.length === 0) {
             alert("Please select at least one keyword first.");
             return;
           }
-          const queries = checkedCbs.map(cb => cb.dataset.query.replace(/\s*\[[^\]]+\]\s*$/, ""));
+          const queries = checkedCbs.map((cb) =>
+            cb.dataset.query.replace(/\s*\[[^\]]+\]\s*$/, ""),
+          );
           const joinedQuery = queries.join(", ");
-          
-          const anyAi = checkedCbs.some(cb => cb.dataset.mode === "ai");
+
+          const anyAi = checkedCbs.some((cb) => cb.dataset.mode === "ai");
           if (anyAi) {
             switchSearchMode("ai");
             elRequirementInput.value = joinedQuery;
@@ -1740,24 +2150,32 @@ async function showSavedKeywordsModal() {
       return section;
     }
 
-    const scrapedSection = createSection("Successfully Scraped", scrapedList, false);
-    const failedSection = createSection("Failed or Remaining Keywords", failedList, true);
+    const scrapedSection = createSection(
+      "Successfully Scraped",
+      scrapedList,
+      false,
+    );
+    const failedSection = createSection(
+      "Failed or Remaining Keywords",
+      failedList,
+      true,
+    );
 
     elSavedKeywordsList.appendChild(scrapedSection);
     elSavedKeywordsList.appendChild(failedSection);
-
   } catch (err) {
     elSavedKeywordsList.innerHTML = `<p class="log-error">Error loading saved searches: ${err.message}</p>`;
   }
 }
 
-
 // ── Relevancy Filter Modal ───────────────────────────────────────────────────
 function showFilterModal() {
   elModalFilter.classList.remove("hidden");
   // Pre-fill checkboxes based on active state
-  const checkboxes = elModalFilter.querySelectorAll('input[name="filter-relevancy"]');
-  checkboxes.forEach(cb => {
+  const checkboxes = elModalFilter.querySelectorAll(
+    'input[name="filter-relevancy"]',
+  );
+  checkboxes.forEach((cb) => {
     cb.checked = state.activeFilter.includes(cb.value);
   });
 }
@@ -1767,8 +2185,10 @@ function hideFilterModal() {
 }
 
 function applyFilter() {
-  const checkboxes = elModalFilter.querySelectorAll('input[name="filter-relevancy"]:checked');
-  state.activeFilter = Array.from(checkboxes).map(cb => cb.value);
+  const checkboxes = elModalFilter.querySelectorAll(
+    'input[name="filter-relevancy"]:checked',
+  );
+  state.activeFilter = Array.from(checkboxes).map((cb) => cb.value);
 
   // Update filter button appearance
   if (state.activeFilter.length > 0) {
@@ -1779,8 +2199,10 @@ function applyFilter() {
 
   // Checkbox validation: Uncheck selected patents outside the active filter
   if (state.activeFilter.length > 0) {
-    const checkedPatents = document.querySelectorAll(".patent-select-checkbox:checked");
-    checkedPatents.forEach(cb => {
+    const checkedPatents = document.querySelectorAll(
+      ".patent-select-checkbox:checked",
+    );
+    checkedPatents.forEach((cb) => {
       const cardRelevancy = cb.dataset.relevancy || "Unaudited";
       if (!state.activeFilter.includes(cardRelevancy)) {
         cb.checked = false;
@@ -1800,27 +2222,38 @@ function applyFilter() {
 function resetFilter() {
   state.activeFilter = [];
   elBtnRelevancyFilter.classList.remove("active");
-  const checkboxes = elModalFilter.querySelectorAll('input[name="filter-relevancy"]');
-  checkboxes.forEach(cb => cb.checked = false);
+  const checkboxes = elModalFilter.querySelectorAll(
+    'input[name="filter-relevancy"]',
+  );
+  checkboxes.forEach((cb) => (cb.checked = false));
   hideFilterModal();
 }
 
 async function handleTerminateScrape() {
   if (!state.activeTaskId) return;
-  if (!confirm("Are you sure you want to stop the scrape? Remaining keywords will be loaded back into the input bar.")) {
+  if (
+    !confirm(
+      "Are you sure you want to stop the scrape? Remaining keywords will be loaded back into the input bar.",
+    )
+  ) {
     return;
   }
   elBtnTerminateScrape.disabled = true;
   elBtnTerminateScrape.innerText = "Stopping...";
   try {
-    const res = await fetch(`/api/scrape/cancel/${state.activeTaskId}`, { method: "POST" });
+    const res = await fetch(`/api/scrape/cancel/${state.activeTaskId}`, {
+      method: "POST",
+    });
     if (!res.ok) {
       const err = await res.json();
       alert(`Could not stop scrape: ${err.detail || "Unknown error"}`);
       elBtnTerminateScrape.disabled = false;
       elBtnTerminateScrape.innerText = "Stop";
     } else {
-      writeLogLine("⛔ Stop request sent. Waiting for the current keyword scrape to finish...", "warning");
+      writeLogLine(
+        "⛔ Stop request sent. Waiting for the current keyword scrape to finish...",
+        "warning",
+      );
     }
   } catch (err) {
     console.error(err);
@@ -1844,32 +2277,6 @@ function setupEventListeners() {
   elBtnModeManual.addEventListener("click", () => switchSearchMode("manual"));
   elBtnModeAi.addEventListener("click", () => switchSearchMode("ai"));
 
-  // Live Log Audit Button and Auditing Pill Option
-  if (elBtnLiveAudit) {
-    elBtnLiveAudit.addEventListener("click", () => {
-      if (!state.lastScrapedSearchId) {
-        alert("No recently scraped data available. Please run a search first.");
-        return;
-      }
-      const requirement = state.activeRequirement || elRequirementInput.value.trim() || state.lastScrapedKeywords || "";
-      elBtnLiveAudit.classList.add("hidden");
-      triggerAudit(state.lastScrapedSearchId, requirement);
-    });
-  }
-
-  const pillAuditing = pills.auditing || document.getElementById("pill-auditing");
-  if (pillAuditing) {
-    pillAuditing.addEventListener("click", () => {
-      if (!state.lastScrapedSearchId) {
-        alert("No recently scraped data available. Please run a search first.");
-        return;
-      }
-      const requirement = state.activeRequirement || elRequirementInput.value.trim() || state.lastScrapedKeywords || "";
-      if (elBtnLiveAudit) elBtnLiveAudit.classList.add("hidden");
-      triggerAudit(state.lastScrapedSearchId, requirement);
-    });
-  }
-
   // Forms
   elScrapeFormManual.addEventListener("submit", handleManualScrapeSubmit);
   elBtnGenerateQueries.addEventListener("click", handleGenerateQueries);
@@ -1885,8 +2292,12 @@ function setupEventListeners() {
     elModalProject.classList.remove("hidden");
     elProjectNameInput.focus();
   });
-  elBtnCloseModal.addEventListener("click", () => elModalProject.classList.add("hidden"));
-  elBtnCancelProject.addEventListener("click", () => elModalProject.classList.add("hidden"));
+  elBtnCloseModal.addEventListener("click", () =>
+    elModalProject.classList.add("hidden"),
+  );
+  elBtnCancelProject.addEventListener("click", () =>
+    elModalProject.classList.add("hidden"),
+  );
   elModalProject.addEventListener("click", (e) => {
     if (e.target === elModalProject) elModalProject.classList.add("hidden");
   });
@@ -1898,12 +2309,16 @@ function setupEventListeners() {
   elModalSettings.addEventListener("click", (e) => {
     if (e.target === elModalSettings) hideSettingsModal();
   });
-  elModalSettings.querySelectorAll('input[name="audit-mode"]').forEach(radio => {
-    radio.addEventListener("change", handleAuditModeChange);
-  });
-  elModalSettings.querySelectorAll('input[name="search-source"]').forEach(checkbox => {
-    checkbox.addEventListener("change", handleSearchSourcesChange);
-  });
+  elModalSettings
+    .querySelectorAll('input[name="audit-mode"]')
+    .forEach((radio) => {
+      radio.addEventListener("change", handleAuditModeChange);
+    });
+  elModalSettings
+    .querySelectorAll('input[name="search-source"]')
+    .forEach((checkbox) => {
+      checkbox.addEventListener("change", handleSearchSourcesChange);
+    });
 
   // CAPTCHA Mode Toggle
   if (elBtnCaptchaModeAuto) {
@@ -1919,14 +2334,17 @@ function setupEventListeners() {
       state.captchaMode = "manual";
       elBtnCaptchaModeManual.classList.add("active");
       elBtnCaptchaModeAuto.classList.remove("active");
-      if (elCaptchaServiceSection) elCaptchaServiceSection.style.display = "none";
+      if (elCaptchaServiceSection)
+        elCaptchaServiceSection.style.display = "none";
     });
   }
-  elModalSettings.querySelectorAll('input[name="captcha-service"]').forEach(radio => {
-    radio.addEventListener("change", (e) => {
-      state.captchaService = e.target.value;
+  elModalSettings
+    .querySelectorAll('input[name="captcha-service"]')
+    .forEach((radio) => {
+      radio.addEventListener("change", (e) => {
+        state.captchaService = e.target.value;
+      });
     });
-  });
 
   // Saved Keywords Modal
   const btnSavedKeywords = document.getElementById("btn-saved-keywords");
@@ -1934,10 +2352,13 @@ function setupEventListeners() {
     btnSavedKeywords.addEventListener("click", showSavedKeywordsModal);
   }
   if (elBtnCloseKeywords) {
-    elBtnCloseKeywords.addEventListener("click", () => elModalSavedKeywords.classList.add("hidden"));
+    elBtnCloseKeywords.addEventListener("click", () =>
+      elModalSavedKeywords.classList.add("hidden"),
+    );
   }
   elModalSavedKeywords.addEventListener("click", (e) => {
-    if (e.target === elModalSavedKeywords) elModalSavedKeywords.classList.add("hidden");
+    if (e.target === elModalSavedKeywords)
+      elModalSavedKeywords.classList.add("hidden");
   });
 
   // Relevancy Filter Modal
@@ -1959,20 +2380,34 @@ function setupEventListeners() {
 
   // Mismatch Alert Modal
   if (elBtnAlertOk) {
-    elBtnAlertOk.addEventListener("click", () => elModalAlert.classList.add("hidden"));
+    elBtnAlertOk.addEventListener("click", () =>
+      elModalAlert.classList.add("hidden"),
+    );
   }
   elModalAlert.addEventListener("click", (e) => {
     if (e.target === elModalAlert) elModalAlert.classList.add("hidden");
   });
+  if (elBtnClosePatentDetails) {
+    elBtnClosePatentDetails.addEventListener("click", () =>
+      elModalPatentDetails.classList.add("hidden"),
+    );
+  }
+  if (elModalPatentDetails) {
+    elModalPatentDetails.addEventListener("click", (e) => {
+      if (e.target === elModalPatentDetails) {
+        elModalPatentDetails.classList.add("hidden");
+      }
+    });
+  }
 
   // Select All History Checkbox
   if (elSelectAllHistoryCheckbox) {
     elSelectAllHistoryCheckbox.addEventListener("change", () => {
       const isChecked = elSelectAllHistoryCheckbox.checked;
-      document.querySelectorAll(".keyword-select-checkbox").forEach(cb => {
+      document.querySelectorAll(".keyword-select-checkbox").forEach((cb) => {
         cb.checked = isChecked;
       });
-      document.querySelectorAll(".patent-select-checkbox").forEach(cb => {
+      document.querySelectorAll(".patent-select-checkbox").forEach((cb) => {
         cb.checked = isChecked;
         if (isChecked) handlePatentCheckboxChange(cb);
       });
@@ -1989,14 +2424,16 @@ function setupEventListeners() {
         return;
       }
       deletePayload = { searchIds, patentIds };
-      
+
       // Populate modal list
       if (elDeleteSelectedList) {
-        elDeleteSelectedList.innerHTML = displayItems.map(item => {
-          return `<div style="padding: 6px 10px; background: var(--bg-secondary); border-radius: var(--radius-sm); border: 1px solid var(--border-color); text-overflow: ellipsis; overflow: hidden; white-space: nowrap;">${escapeHtml(item)}</div>`;
-        }).join("");
+        elDeleteSelectedList.innerHTML = displayItems
+          .map((item) => {
+            return `<div style="padding: 6px 10px; background: var(--bg-secondary); border-radius: var(--radius-sm); border: 1px solid var(--border-color); text-overflow: ellipsis; overflow: hidden; white-space: nowrap;">${escapeHtml(item)}</div>`;
+          })
+          .join("");
       }
-      
+
       if (elModalDeleteConfirm) {
         elModalDeleteConfirm.classList.remove("hidden");
       }
@@ -2027,19 +2464,19 @@ function setupEventListeners() {
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             search_ids: deletePayload.searchIds,
-            patent_ids: deletePayload.patentIds
-          })
+            patent_ids: deletePayload.patentIds,
+          }),
         });
         if (!res.ok) {
           const err = await res.json();
           throw new Error(err.detail || "Delete request failed");
         }
-        
+
         // Hide modal
         if (elModalDeleteConfirm) {
           elModalDeleteConfirm.classList.add("hidden");
         }
-        
+
         // Uncheck select all header
         if (elSelectAllHistoryCheckbox) {
           elSelectAllHistoryCheckbox.checked = false;
@@ -2055,14 +2492,24 @@ function setupEventListeners() {
     });
   }
 
-  elBtnGlobalExportCsv.addEventListener("click", () => handleGlobalExport("csv"));
-  elBtnGlobalExportPdf.addEventListener("click", () => handleGlobalExport("pdf"));
+  elBtnGlobalExportCsv.addEventListener("click", () =>
+    handleGlobalExport("csv"),
+  );
+  if (elBtnGlobalAiAudit) {
+    elBtnGlobalAiAudit.addEventListener("click", triggerSelectedAudit);
+  }
+  if (elBtnGlobalDeepScrape) {
+    elBtnGlobalDeepScrape.addEventListener("click", triggerDeepScrape);
+  }
 
   // Source Toggle Buttons listeners
   if (elBtnSourceGoogle) {
     elBtnSourceGoogle.addEventListener("click", () => {
       state.searchSources = ["google"];
-      localStorage.setItem("searchSources", JSON.stringify(state.searchSources));
+      localStorage.setItem(
+        "searchSources",
+        JSON.stringify(state.searchSources),
+      );
       syncSourceToggleButtons();
       syncSourceCheckboxes();
       updateSourceFieldsVisibility();
@@ -2071,7 +2518,10 @@ function setupEventListeners() {
   if (elBtnSourceIndia) {
     elBtnSourceIndia.addEventListener("click", () => {
       state.searchSources = ["india"];
-      localStorage.setItem("searchSources", JSON.stringify(state.searchSources));
+      localStorage.setItem(
+        "searchSources",
+        JSON.stringify(state.searchSources),
+      );
       syncSourceToggleButtons();
       syncSourceCheckboxes();
       updateSourceFieldsVisibility();
@@ -2086,7 +2536,8 @@ function setupEventListeners() {
   }
   if (elBtnManualIndiaRemoveRow && elManualIndiaQueryRowsContainer) {
     elBtnManualIndiaRemoveRow.addEventListener("click", () => {
-      const rows = elManualIndiaQueryRowsContainer.querySelectorAll(".india-query-row");
+      const rows =
+        elManualIndiaQueryRowsContainer.querySelectorAll(".india-query-row");
       if (rows.length > 1) {
         rows[rows.length - 1].remove();
       } else {
@@ -2100,13 +2551,18 @@ function setupEventListeners() {
     elBtnIndiaOptions.addEventListener("click", showIndiaOptionsModal);
   }
   if (elBtnCloseIndiaOptions) {
-    elBtnCloseIndiaOptions.addEventListener("click", () => elModalIndiaOptions.classList.add("hidden"));
+    elBtnCloseIndiaOptions.addEventListener("click", () =>
+      elModalIndiaOptions.classList.add("hidden"),
+    );
   }
   if (elBtnIndiaCancel) {
-    elBtnIndiaCancel.addEventListener("click", () => elModalIndiaOptions.classList.add("hidden"));
+    elBtnIndiaCancel.addEventListener("click", () =>
+      elModalIndiaOptions.classList.add("hidden"),
+    );
   }
   elModalIndiaOptions.addEventListener("click", (e) => {
-    if (e.target === elModalIndiaOptions) elModalIndiaOptions.classList.add("hidden");
+    if (e.target === elModalIndiaOptions)
+      elModalIndiaOptions.classList.add("hidden");
   });
   if (elIndiaOptionsForm) {
     elIndiaOptionsForm.addEventListener("submit", saveIndiaOptions);
@@ -2127,11 +2583,11 @@ async function handleCreateProject(e) {
     const res = await fetch("/api/projects", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ name })
+      body: JSON.stringify({ name }),
     });
     if (!res.ok) throw new Error("Could not create project");
     const newProject = await res.json();
-    
+
     elModalProject.classList.add("hidden");
     elProjectForm.reset();
     await loadProjects();
@@ -2144,51 +2600,65 @@ async function handleCreateProject(e) {
 // ── Utility Helpers ──────────────────────────────────────────────────────────
 function escapeHtml(text) {
   const map = {
-    '&': '&amp;',
-    '<': '&lt;',
-    '>': '&gt;',
-    '"': '&quot;',
-    "'": '&#039;'
+    "&": "&amp;",
+    "<": "&lt;",
+    ">": "&gt;",
+    '"': "&quot;",
+    "'": "&#039;",
   };
-  return String(text).replace(/[&<>"']/g, m => map[m]);
+  return String(text).replace(/[&<>"']/g, (m) => map[m]);
 }
 
 function escapeRegExp(string) {
-  return string.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  return string.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 const INDIA_SEARCH_FIELDS_MAP = {
-  "TI": "Title",
-  "ABS": "Abstract",
-  "CSP": "Complete Specification",
-  "AP": "Application Number",
-  "PN": "Publication Number",
+  TI: "Title",
+  ABS: "Abstract",
+  CSP: "Complete Specification",
+  AP: "Application Number",
+  PN: "Publication Number",
   "patent-number": "Patent Number",
-  "PA": "Applicant Name",
-  "ANC": "Applicant Country",
-  "ANA": "Applicant Address",
-  "IN": "Inventor Name",
-  "INC": "Inventor Country",
-  "INA": "Inventor Address",
-  "FO": "Filing Office",
-  "IC": "International Classification",
-  "PAP": "Patent Application Publication",
-  "PPN": "PCT Publication Number"
+  PA: "Applicant Name",
+  ANC: "Applicant Country",
+  ANA: "Applicant Address",
+  IN: "Inventor Name",
+  INC: "Inventor Country",
+  INA: "Inventor Address",
+  FO: "Filing Office",
+  IC: "International Classification",
+  PAP: "Patent Application Publication",
+  PPN: "PCT Publication Number",
 };
 
 function getYesterdayDateString() {
   const yesterday = new Date(Date.now() - 86400000);
-  const dd = String(yesterday.getDate()).padStart(2, '0');
-  const mm = String(yesterday.getMonth() + 1).padStart(2, '0');
+  const dd = String(yesterday.getDate()).padStart(2, "0");
+  const mm = String(yesterday.getMonth() + 1).padStart(2, "0");
   const yyyy = yesterday.getFullYear();
   return `${mm}/${dd}/${yyyy}`;
 }
 
 function getTodayDateString() {
   const today = new Date();
-  const dd = String(today.getDate()).padStart(2, '0');
-  const mm = String(today.getMonth() + 1).padStart(2, '0');
+  const dd = String(today.getDate()).padStart(2, "0");
+  const mm = String(today.getMonth() + 1).padStart(2, "0");
   const yyyy = today.getFullYear();
+  return `${mm}/${dd}/${yyyy}`;
+}
+
+function getIndiaYesterdayDateString() {
+  // Get current UTC time
+  const now = new Date();
+  // Convert to IST (UTC+5.5)
+  const istOffset = 5.5 * 60 * 60 * 1000;
+  const istNow = new Date(now.getTime() + istOffset);
+  // Get yesterday in IST
+  const istYesterday = new Date(istNow.getTime() - 86400000);
+  const dd = String(istYesterday.getUTCDate()).padStart(2, "0");
+  const mm = String(istYesterday.getUTCMonth() + 1).padStart(2, "0");
+  const yyyy = istYesterday.getUTCFullYear();
   return `${mm}/${dd}/${yyyy}`;
 }
 
@@ -2203,22 +2673,29 @@ async function initIndiaOptions() {
     if (local) {
       state.indiaOptions = JSON.parse(local);
       if (state.indiaOptions) {
-        if (state.indiaOptions.from_date && state.indiaOptions.from_date.includes("/")) {
+        if (
+          state.indiaOptions.from_date &&
+          state.indiaOptions.from_date.includes("/")
+        ) {
           const parts = state.indiaOptions.from_date.split("/");
           if (parts.length === 3 && parseInt(parts[0], 10) > 12) {
             state.indiaOptions.from_date = `${parts[1]}/${parts[0]}/${parts[2]}`;
           }
         }
-        if (state.indiaOptions.to_date && state.indiaOptions.to_date.includes("/")) {
+        if (
+          state.indiaOptions.to_date &&
+          state.indiaOptions.to_date.includes("/")
+        ) {
           const parts = state.indiaOptions.to_date.split("/");
           if (parts.length === 3 && parseInt(parts[0], 10) > 12) {
             state.indiaOptions.to_date = `${parts[1]}/${parts[0]}/${parts[2]}`;
           }
         }
-        // Safety: If saved to_date is today or in the future, automatically reset it to yesterday to avoid crash
-        const todayStr = getTodayDateString();
-        if (state.indiaOptions.to_date === todayStr) {
-          state.indiaOptions.to_date = getYesterdayDateString();
+        // Safety: If saved to_date is today or in the future (from client's perspective), reset it to India's yesterday.
+        const savedToDate = new Date(state.indiaOptions.to_date);
+        const clientToday = new Date(getTodayDateString());
+        if (!state.indiaOptions.to_date || savedToDate >= clientToday) {
+          state.indiaOptions.to_date = getIndiaYesterdayDateString();
         }
       }
     } else {
@@ -2233,9 +2710,9 @@ async function initIndiaOptions() {
         granted: false,
         date_field: "APD",
         from_date: "01/01/2020",
-        to_date: getYesterdayDateString(),
+        to_date: getIndiaYesterdayDateString(),
         logic_field: "AND",
-        rows: [{ field: "TI", text: "", logic: "AND" }]
+        rows: [{ field: "TI", text: "", logic: "AND" }],
       };
     }
   }
@@ -2246,7 +2723,7 @@ async function initIndiaOptions() {
       state.indiaOptions.from_date = "01/01/2020";
     }
     if (!state.indiaOptions.to_date) {
-      state.indiaOptions.to_date = getYesterdayDateString();
+      state.indiaOptions.to_date = getIndiaYesterdayDateString();
     }
 
     // Enforce mutual exclusivity
@@ -2266,7 +2743,8 @@ function showIndiaOptionsModal() {
   elIndiaOptDateField.value = state.indiaOptions.date_field || "APD";
   elIndiaOptLogicField.value = state.indiaOptions.logic_field || "AND";
   elIndiaOptFromDate.value = state.indiaOptions.from_date || "01/01/2020";
-  elIndiaOptToDate.value = state.indiaOptions.to_date || getYesterdayDateString();
+  elIndiaOptToDate.value =
+    state.indiaOptions.to_date || getIndiaYesterdayDateString();
 
   elModalIndiaOptions.classList.remove("hidden");
 }
@@ -2336,8 +2814,12 @@ function addRowToUi(container, field = "TI", text = "", logic = "AND") {
 function renderManualIndiaQueryRows() {
   if (!elManualIndiaQueryRowsContainer) return;
   elManualIndiaQueryRowsContainer.innerHTML = "";
-  const rows = (state.indiaOptions && state.indiaOptions.rows) || [{ field: "TI", text: "", logic: "AND" }];
-  rows.forEach(row => addRowToUi(elManualIndiaQueryRowsContainer, row.field, row.text, row.logic));
+  const rows = (state.indiaOptions && state.indiaOptions.rows) || [
+    { field: "TI", text: "", logic: "AND" },
+  ];
+  rows.forEach((row) =>
+    addRowToUi(elManualIndiaQueryRowsContainer, row.field, row.text, row.logic),
+  );
 }
 
 function saveIndiaOptions(e) {
@@ -2346,19 +2828,23 @@ function saveIndiaOptions(e) {
   const published = elIndiaOptPublished.checked;
   const granted = elIndiaOptGranted.checked;
   if (!published && !granted) {
-    alert("At least one publication type (Published or Granted) must be selected.");
+    alert(
+      "At least one publication type (Published or Granted) must be selected.",
+    );
     return;
   }
 
   // Keep rows from the manual panel if it has any, otherwise use active options
   const rows = [];
   if (elManualIndiaQueryRowsContainer) {
-    elManualIndiaQueryRowsContainer.querySelectorAll(".india-query-row").forEach(rowDiv => {
-      const field = rowDiv.querySelector(".row-field").value;
-      const text = rowDiv.querySelector(".row-text").value.trim();
-      const logic = rowDiv.querySelector(".row-logic").value;
-      rows.push({ field, text, logic });
-    });
+    elManualIndiaQueryRowsContainer
+      .querySelectorAll(".india-query-row")
+      .forEach((rowDiv) => {
+        const field = rowDiv.querySelector(".row-field").value;
+        const text = rowDiv.querySelector(".row-text").value.trim();
+        const logic = rowDiv.querySelector(".row-logic").value;
+        rows.push({ field, text, logic });
+      });
   }
 
   state.indiaOptions = {
@@ -2366,9 +2852,12 @@ function saveIndiaOptions(e) {
     granted,
     date_field: elIndiaOptDateField.value,
     from_date: elIndiaOptFromDate.value.trim() || "01/01/2020",
-    to_date: elIndiaOptToDate.value.trim() || getYesterdayDateString(),
+    to_date: elIndiaOptToDate.value.trim() || getIndiaYesterdayDateString(),
     logic_field: elIndiaOptLogicField.value,
-    rows: rows.length > 0 ? rows : (state.indiaOptions.rows || [{ field: "TI", text: "", logic: "AND" }])
+    rows:
+      rows.length > 0
+        ? rows
+        : state.indiaOptions.rows || [{ field: "TI", text: "", logic: "AND" }],
   };
 
   localStorage.setItem("indiaOptions", JSON.stringify(state.indiaOptions));
@@ -2388,13 +2877,16 @@ async function handleCaptchaSubmit(e) {
     const res = await fetch(`/api/captcha/${taskId}`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ answer })
+      body: JSON.stringify({ answer }),
     });
     if (!res.ok) {
       const err = await res.json();
       throw new Error(err.detail || "CAPTCHA submission failed");
     }
-    writeLogLine("Submitted CAPTCHA answer. Waiting for verification...", "info");
+    writeLogLine(
+      "Submitted CAPTCHA answer. Waiting for verification...",
+      "info",
+    );
     elModalCaptcha.classList.add("hidden");
   } catch (err) {
     alert(`Error submitting CAPTCHA: ${err.message}`);
@@ -2411,7 +2903,7 @@ function updateGlobalSelectAllState() {
     elSelectAllHistoryCheckbox.checked = false;
     return;
   }
-  const allChecked = Array.from(allKeywordCbs).every(cb => cb.checked);
+  const allChecked = Array.from(allKeywordCbs).every((cb) => cb.checked);
   elSelectAllHistoryCheckbox.checked = allChecked;
 }
 
@@ -2421,7 +2913,7 @@ function getSelectedItemsToDelete() {
   const displayItems = [];
 
   const cards = document.querySelectorAll(".query-card");
-  cards.forEach(card => {
+  cards.forEach((card) => {
     const headerCb = card.querySelector(".keyword-select-checkbox");
     if (!headerCb) return;
     const searchId = parseInt(headerCb.dataset.searchId, 10);
@@ -2432,10 +2924,14 @@ function getSelectedItemsToDelete() {
       // Show just the keyword text
       displayItems.push(searchQuery);
     } else {
-      const patentCbs = card.querySelectorAll(".patent-select-checkbox:checked");
-      patentCbs.forEach(cb => {
+      const patentCbs = card.querySelectorAll(
+        ".patent-select-checkbox:checked",
+      );
+      patentCbs.forEach((cb) => {
         const patentId = parseInt(cb.dataset.patentId, 10);
-        const titleEl = cb.closest(".patent-card").querySelector(".patent-title");
+        const titleEl = cb
+          .closest(".patent-card")
+          .querySelector(".patent-title");
         const titleText = titleEl ? titleEl.textContent.trim() : "";
         patentIds.push(patentId);
         // Show just the patent title (or ID if no title)
@@ -2446,6 +2942,3 @@ function getSelectedItemsToDelete() {
 
   return { searchIds, patentIds, displayItems };
 }
-
-
-

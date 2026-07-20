@@ -38,11 +38,12 @@ from db import (
     init_db, get_projects, create_project, delete_project,
     create_search, save_patents, get_project_data, get_search_results,
     get_patents_by_ids, get_all_project_patents, update_patent_audit,
+    update_patent_deep_scrape,
     get_db_connection,
     register_user, verify_user, create_session, get_user_id_by_session, delete_session,
     verify_project_ownership, verify_search_ownership, verify_patent_ownership
 )
-from scraper import get_india_options_from_env, normalize_india_options, normalize_sources, scrape_patents
+from scraper import fetch_patent_deep_scrape, get_india_options_from_env, normalize_india_options, normalize_sources, scrape_patents
 
 # ── Logging ───────────────────────────────────────────────────────────────────
 logging.basicConfig(
@@ -51,6 +52,9 @@ logging.basicConfig(
     datefmt="%H:%M:%S",
 )
 logger = logging.getLogger("server")
+
+MAX_CAPTCHA_ATTEMPTS = 2
+MAX_MANUAL_PIPELINE_CAPTCHA_RESTARTS = 3
 
 
 def score_to_relevancy(score) -> str:
@@ -225,6 +229,15 @@ class ConfirmAISearchRequest(BaseModel):
 
 class AuditRequest(BaseModel):
     requirement: str = ""  # optional override; falls back to stored query
+
+class SelectedAuditRequest(BaseModel):
+    project_id: int
+    patent_ids: list[int]
+    requirement: str = ""
+
+class DeepScrapeRequest(BaseModel):
+    project_id: int
+    patent_ids: list[int]
 
 class ExportRequest(BaseModel):
     patent_ids: list[int] = None
@@ -437,7 +450,6 @@ async def _request_captcha(task_id: str, image_data_url: str, captcha_mode: str 
     - manual mode: Show the CAPTCHA modal to the user every attempt, up to MAX_CAPTCHA_ATTEMPTS times.
                    Never try any paid service.
     """
-    MAX_CAPTCHA_ATTEMPTS = 5
     queue = _task_queues.get(task_id)
     if not queue:
         logger.error("[CAPTCHA] Queue not found for task %s", task_id)
@@ -629,99 +641,137 @@ async def _manual_pipeline(
     queue = _task_queues[task_id]
     _task_cancelled[task_id] = False
     try:
-        await _push(queue, {
-            "stage": "scraping",
-            "message": (
-                f"Starting manual scrape for {len(keywords)} keyword"
-                f"{'' if len(keywords) == 1 else 's'} across {', '.join(s.title() for s in sources)} Patents..."
-            ),
-        })
-
-        scraped_runs = []
-        failed_keywords = []
-        remaining_keywords = []
-
-        for idx, kw in enumerate(keywords, 1):
-            # Check if user requested termination
-            if _task_cancelled.get(task_id):
-                remaining_keywords = keywords[idx - 1:]  # include current unstarted
+        for pipeline_attempt in range(1, MAX_MANUAL_PIPELINE_CAPTCHA_RESTARTS + 2):
+            if pipeline_attempt > 1:
                 await _push(queue, {
-                    "stage": "scraping",
-                    "message": f"⛔ Scrape terminated by user. {len(remaining_keywords)} keywords remaining.",
+                    "stage": "planning",
+                    "reset_pipeline": True,
+                    "message": (
+                        f"Restarting full manual pipeline after CAPTCHA failure "
+                        f"({pipeline_attempt - 1}/{MAX_MANUAL_PIPELINE_CAPTCHA_RESTARTS})..."
+                    ),
                 })
-                break
 
             await _push(queue, {
                 "stage": "scraping",
-                "message": f"Searching keyword {idx}/{len(keywords)}: {kw[:80]}",
+                "message": (
+                    f"Starting manual scrape for {len(keywords)} keyword"
+                    f"{'' if len(keywords) == 1 else 's'} across {', '.join(s.title() for s in sources)} Patents..."
+                ),
             })
 
-            # Reset per-keyword CAPTCHA attempt counter
-            _captcha_attempts[task_id] = 0
+            scraped_runs = []
+            failed_keywords = []
+            remaining_keywords = []
+            restart_for_captcha = False
 
-            def _progress_sync(msg: str):
-                asyncio.get_event_loop().call_soon_threadsafe(
-                    lambda m=msg: asyncio.ensure_future(
-                        queue.put({"stage": "scraping", "message": m})
-                    )
-                )
-
-            try:
-                curr_india_options = india_options
-                if isinstance(india_options, list):
-                    if idx - 1 < len(india_options):
-                        curr_india_options = india_options[idx - 1]
-                    else:
-                        curr_india_options = india_options[-1] if india_options else None
-
-                patents = await scrape_patents(
-                    kw,
-                    max_results,
-                    progress_callback=_progress_sync,
-                    sources=sources,
-                    india_options=curr_india_options,
-                    captcha_callback=lambda image, tid=task_id, cm=captcha_mode, cs=captcha_service: _request_captcha(tid, image, cm, cs),
-                    is_cancelled_callback=lambda: _task_cancelled.get(task_id, False),
-                )
-                if patents:
-                    source_label = ", ".join(sorted({p.get("source", "Google Patents") for p in patents}))
-                    search_id = create_search(project_id, f"{kw} [{source_label}]", search_mode="manual", user_id=user_id)
-                    save_patents(search_id, patents, user_id=user_id)
-                    scraped_runs.append({"keyword": kw, "count": len(patents), "search_id": search_id})
-                    await _push(queue, {
-                        "stage": "saving",
-                        "message": f"✅ Saved {len(patents)} patents for keyword: {kw[:80]}",
-                    })
-                else:
-                    failed_keywords.append(kw)
-                    scraped_runs.append({"keyword": kw, "count": 0, "error": "No results found"})
+            for idx, kw in enumerate(keywords, 1):
+                # Check if user requested termination
+                if _task_cancelled.get(task_id):
+                    remaining_keywords = keywords[idx - 1:]  # include current unstarted
                     await _push(queue, {
                         "stage": "scraping",
-                        "message": f"⚠️ No results found for: {kw[:80]}",
+                        "message": f"⛔ Scrape terminated by user. {len(remaining_keywords)} keywords remaining.",
                     })
-            except Exception as exc:
-                logger.error("[Manual] Scrape failed for '%s': %s", kw, exc, exc_info=True)
-                failed_keywords.append(kw)
-                scraped_runs.append({"keyword": kw, "count": 0, "error": str(exc)})
+                    break
+
                 await _push(queue, {
                     "stage": "scraping",
-                    "message": f"❌ Keyword failed: {kw[:60]} — {str(exc)[:120]}",
+                    "message": f"Searching keyword {idx}/{len(keywords)}: {kw[:80]}",
                 })
 
-        if failed_keywords:
-            create_search(project_id, ",".join(failed_keywords), search_mode="failed", user_id=user_id)
-        if remaining_keywords:
-            create_search(project_id, ",".join(remaining_keywords), search_mode="failed", user_id=user_id)
+                # Reset per-keyword CAPTCHA attempt counter
+                _captcha_attempts[task_id] = 0
 
-        await _push(queue, {
-            "stage": "complete",
-            "message": "Manual scrape complete.",
-            "scraped": scraped_runs,
-            "failed_keywords": failed_keywords,
-            "remaining_keywords": remaining_keywords,
-            "terminated": _task_cancelled.get(task_id, False),
-            "data": get_project_data(project_id, user_id),
-        })
+                def _progress_sync(msg: str):
+                    asyncio.get_event_loop().call_soon_threadsafe(
+                        lambda m=msg: asyncio.ensure_future(
+                            queue.put({"stage": "scraping", "message": m})
+                        )
+                    )
+
+                try:
+                    curr_india_options = india_options
+                    if isinstance(india_options, list):
+                        if idx - 1 < len(india_options):
+                            curr_india_options = india_options[idx - 1]
+                        else:
+                            curr_india_options = india_options[-1] if india_options else None
+
+                    patents = await scrape_patents(
+                        kw,
+                        max_results,
+                        progress_callback=_progress_sync,
+                        sources=sources,
+                        india_options=curr_india_options,
+                        captcha_callback=lambda image, tid=task_id, cm=captcha_mode, cs=captcha_service: _request_captcha(tid, image, cm, cs),
+                        is_cancelled_callback=lambda: _task_cancelled.get(task_id, False),
+                    )
+                    if patents:
+                        source_label = ", ".join(sorted({p.get("source", "Google Patents") for p in patents}))
+                        search_id = create_search(project_id, f"{kw} [{source_label}]", search_mode="manual", user_id=user_id)
+                        save_patents(search_id, patents, user_id=user_id)
+                        scraped_runs.append({"keyword": kw, "count": len(patents), "search_id": search_id})
+                        await _push(queue, {
+                            "stage": "saving",
+                            "message": f"✅ Saved {len(patents)} patents for keyword: {kw[:80]}",
+                        })
+                    else:
+                        failed_keywords.append(kw)
+                        scraped_runs.append({"keyword": kw, "count": 0, "error": "No results found"})
+                        await _push(queue, {
+                            "stage": "scraping",
+                            "message": f"⚠️ No results found for: {kw[:80]}",
+                        })
+                except Exception as exc:
+                    message = str(exc)
+                    if "CAPTCHA" in message and ("failed after" in message or "was not provided" in message):
+                        logger.warning("[Manual] CAPTCHA failure triggered full restart for '%s': %s", kw, exc)
+                        restart_for_captcha = True
+                        _captcha_attempts[task_id] = 0
+                        break
+
+                    logger.error("[Manual] Scrape failed for '%s': %s", kw, exc, exc_info=True)
+                    failed_keywords.append(kw)
+                    scraped_runs.append({"keyword": kw, "count": 0, "error": message})
+                    await _push(queue, {
+                        "stage": "scraping",
+                        "message": f"❌ Keyword failed: {kw[:60]} — {message[:120]}",
+                    })
+
+            if restart_for_captcha and pipeline_attempt <= MAX_MANUAL_PIPELINE_CAPTCHA_RESTARTS:
+                await _push(queue, {
+                    "stage": "planning",
+                    "reset_pipeline": True,
+                    "message": "CAPTCHA was not accepted. Restarting the whole manual pipeline from the start...",
+                })
+                continue
+
+            if restart_for_captcha:
+                await _push(queue, {
+                    "stage": "error",
+                    "message": (
+                        "Manual scrape stopped because CAPTCHA kept failing after "
+                        f"{MAX_MANUAL_PIPELINE_CAPTCHA_RESTARTS} full pipeline restart attempts."
+                    ),
+                })
+                return
+
+            if failed_keywords:
+                create_search(project_id, ",".join(failed_keywords), search_mode="failed", user_id=user_id)
+            if remaining_keywords:
+                create_search(project_id, ",".join(remaining_keywords), search_mode="failed", user_id=user_id)
+
+            await _push(queue, {
+                "stage": "complete",
+                "message": "Manual scrape complete.",
+                "scraped": scraped_runs,
+                "failed_keywords": failed_keywords,
+                "remaining_keywords": remaining_keywords,
+                "terminated": _task_cancelled.get(task_id, False),
+                "data": get_project_data(project_id, user_id),
+            })
+            return
 
     except Exception as exc:
         logger.error("[Manual] Pipeline crashed task_id=%s: %s", task_id, exc, exc_info=True)
@@ -730,8 +780,14 @@ async def _manual_pipeline(
 
 # ── Background pipeline: On-demand AI Audit ──────────────────────────────────
 
-async def _audit_pipeline(search_id: int, requirement: str, task_id: str, user_id: int):
-    """Audits all patents in a search run using Gemini and updates each row live."""
+async def _audit_patents_pipeline(
+    patents: list[dict],
+    requirement: str,
+    task_id: str,
+    user_id: int,
+    project_id: int | None = None,
+):
+    """Audit a concrete patent list using Gemini and update each row live."""
     queue = _task_queues[task_id]
 
     try:
@@ -742,13 +798,13 @@ async def _audit_pipeline(search_id: int, requirement: str, task_id: str, user_i
         return
 
     try:
-        search = get_search_results(search_id, user_id)
-        patents = search.get("patents", [])
         if not patents:
-            await _push(queue, {"stage": "error", "message": "No patents found for this search run."})
+            await _push(queue, {"stage": "error", "message": "No selected patents found to audit."})
             return
 
-        req_text = requirement.strip() or search.get("query", "")
+        req_text = requirement.strip() or ", ".join(
+            sorted({p.get("keywords", "") for p in patents if p.get("keywords")})
+        )
         total = len(patents)
 
         await _push(queue, {
@@ -805,18 +861,103 @@ async def _audit_pipeline(search_id: int, requirement: str, task_id: str, user_i
                     "message": f"⚠️ Audit error [{idx}/{total}]: {str(exc)[:80]}",
                 })
 
-        project_id = search.get("project_id")
         project_data = get_project_data(project_id, user_id) if project_id else []
         await _push(queue, {
             "stage": "complete",
             "message": f"✅ Audit complete — {total} patents assessed.",
             "data": project_data,
         })
-        logger.info("[Audit] Done: search_id=%d, total=%d, task_id=%s", search_id, total, task_id)
+        logger.info("[Audit] Done: total=%d, task_id=%s", total, task_id)
 
     except Exception as exc:
         logger.error("[Audit] Unhandled error task_id=%s: %s", task_id, exc, exc_info=True)
         await _push(queue, {"stage": "error", "message": f"Audit crashed: {str(exc)}"})
+
+
+async def _audit_pipeline(search_id: int, requirement: str, task_id: str, user_id: int):
+    """Audits all patents in a search run using Gemini and updates each row live."""
+    try:
+        search = get_search_results(search_id, user_id)
+        patents = search.get("patents", [])
+        for patent in patents:
+            patent["keywords"] = search.get("query", "")
+        await _audit_patents_pipeline(
+            patents=patents,
+            requirement=requirement.strip() or search.get("query", ""),
+            task_id=task_id,
+            user_id=user_id,
+            project_id=search.get("project_id"),
+        )
+    except Exception as exc:
+        logger.error("[Audit] Unhandled search audit error task_id=%s: %s", task_id, exc, exc_info=True)
+        queue = _task_queues.get(task_id)
+        if queue:
+            await _push(queue, {"stage": "error", "message": f"Audit crashed: {str(exc)}"})
+
+
+async def _deep_scrape_pipeline(
+    patents: list[dict],
+    task_id: str,
+    user_id: int,
+    project_id: int,
+):
+    """Deep scrape selected patent detail pages and save extracted body text."""
+    queue = _task_queues[task_id]
+    total = len(patents)
+
+    await _push(queue, {
+        "stage": "scraping",
+        "message": f"Starting deep scrape for {total} selected patent{'' if total == 1 else 's'}...",
+        "total": total,
+        "current": 0,
+    })
+
+    saved = 0
+    failed = []
+    for idx, patent in enumerate(patents, 1):
+        if _task_cancelled.get(task_id):
+            await _push(queue, {
+                "stage": "scraping",
+                "message": f"⛔ Deep scrape cancelled after {idx - 1}/{total} patents.",
+            })
+            break
+
+        patent_code = patent.get("patent_id", "")
+        url = patent.get("url", "")
+        await _push(queue, {
+            "stage": "scraping",
+            "current": idx,
+            "total": total,
+            "message": f"Opening patent detail page [{idx}/{total}]: {patent_code}",
+        })
+
+        try:
+            deep_text = await asyncio.to_thread(fetch_patent_deep_scrape, url, patent_code)
+            update_patent_deep_scrape(patent["id"], deep_text, user_id=user_id)
+            saved += 1
+            await _push(queue, {
+                "stage": "saving",
+                "current": idx,
+                "total": total,
+                "patent_id": patent["id"],
+                "message": f"✅ Deep scraped {patent_code} — saved {len(deep_text):,} characters.",
+            })
+        except Exception as exc:
+            failed.append(patent_code or str(patent.get("id", "")))
+            logger.error("[DeepScrape] Failed for patent id=%s code=%s: %s", patent.get("id"), patent_code, exc, exc_info=True)
+            await _push(queue, {
+                "stage": "scraping",
+                "current": idx,
+                "total": total,
+                "message": f"⚠️ Deep scrape failed for {patent_code or patent.get('id')}: {str(exc)[:100]}",
+            })
+
+    await _push(queue, {
+        "stage": "complete",
+        "message": f"Deep scrape complete — saved {saved}/{total} patent detail bodies.",
+        "failed_patents": failed,
+        "data": get_project_data(project_id, user_id),
+    })
 
 
 # ── API Endpoints — Projects ──────────────────────────────────────────────────
@@ -1072,6 +1213,76 @@ async def trigger_audit(search_id: int, req: AuditRequest, background_tasks: Bac
     return {"status": "processing", "task_id": task_id}
 
 
+@app.post("/api/ai/audit-selected")
+async def trigger_selected_audit(req: SelectedAuditRequest, background_tasks: BackgroundTasks, user_id: int = Depends(get_current_user_id)):
+    """On-demand: audit only the selected patent rows."""
+    if not verify_project_ownership(req.project_id, user_id):
+        raise HTTPException(status_code=403, detail="Access denied")
+    patent_ids = sorted({int(pid) for pid in (req.patent_ids or []) if int(pid) > 0})
+    if not patent_ids:
+        raise HTTPException(status_code=400, detail="Select at least one patent to audit")
+
+    patents = get_patents_by_ids(patent_ids, user_id)
+    if len(patents) != len(patent_ids):
+        raise HTTPException(status_code=403, detail="One or more selected patents are not accessible")
+    project_patent_ids = {
+        int(p["id"]) for p in get_all_project_patents(req.project_id, user_id)
+    }
+    if any(pid not in project_patent_ids for pid in patent_ids):
+        raise HTTPException(status_code=403, detail="One or more selected patents are outside this project")
+
+    task_id = str(uuid.uuid4())
+    queue: asyncio.Queue = asyncio.Queue()
+    _task_queues[task_id] = queue
+
+    logger.info("[API] Selected audit triggered — patents=%d, task_id=%s", len(patents), task_id)
+
+    background_tasks.add_task(
+        _audit_patents_pipeline,
+        patents=patents,
+        requirement=req.requirement,
+        task_id=task_id,
+        user_id=user_id,
+        project_id=req.project_id,
+    )
+    return {"status": "processing", "task_id": task_id}
+
+
+@app.post("/api/deep-scrape")
+async def trigger_deep_scrape(req: DeepScrapeRequest, background_tasks: BackgroundTasks, user_id: int = Depends(get_current_user_id)):
+    """Deep scrape only the selected patent rows."""
+    if not verify_project_ownership(req.project_id, user_id):
+        raise HTTPException(status_code=403, detail="Access denied")
+    patent_ids = sorted({int(pid) for pid in (req.patent_ids or []) if int(pid) > 0})
+    if not patent_ids:
+        raise HTTPException(status_code=400, detail="Select at least one patent to deep scrape")
+
+    patents = get_patents_by_ids(patent_ids, user_id)
+    if len(patents) != len(patent_ids):
+        raise HTTPException(status_code=403, detail="One or more selected patents are not accessible")
+    project_patent_ids = {
+        int(p["id"]) for p in get_all_project_patents(req.project_id, user_id)
+    }
+    if any(pid not in project_patent_ids for pid in patent_ids):
+        raise HTTPException(status_code=403, detail="One or more selected patents are outside this project")
+
+    task_id = str(uuid.uuid4())
+    queue: asyncio.Queue = asyncio.Queue()
+    _task_queues[task_id] = queue
+    _task_cancelled[task_id] = False
+
+    logger.info("[API] Deep scrape triggered — patents=%d, task_id=%s", len(patents), task_id)
+
+    background_tasks.add_task(
+        _deep_scrape_pipeline,
+        patents=patents,
+        task_id=task_id,
+        user_id=user_id,
+        project_id=req.project_id,
+    )
+    return {"status": "processing", "task_id": task_id}
+
+
 @app.get("/api/ai/stream/{task_id}")
 async def stream_task(task_id: str, user_id: int = Depends(get_current_user_id)):
     """SSE endpoint — client connects here to receive live pipeline progress."""
@@ -1091,8 +1302,33 @@ async def stream_task(task_id: str, user_id: int = Depends(get_current_user_id))
 
 # ── Export Helpers ────────────────────────────────────────────────────────────
 
+CSV_CELL_SAFE_LIMIT = 30000
+DEEP_SCRAPE_FIELD_PREFIX = "deep_scrape_text_part_"
+
 EXPORT_FIELDS = ["source", "patent_id", "keywords", "title", "relevancy", "abstract", "url",
-                 "confidence_score", "ai_reasoning", "overlap_reasons", "difference_reasons"]
+                 "deep_scraped_at", "confidence_score", "ai_reasoning",
+                 "overlap_reasons", "difference_reasons"]
+
+
+def _chunk_csv_cell(value, limit: int = CSV_CELL_SAFE_LIMIT) -> list[str]:
+    """Split large values so spreadsheet apps do not drop text after their cell limit."""
+    text = "" if value is None else str(value)
+    if not text:
+        return [""]
+    return [text[i:i + limit] for i in range(0, len(text), limit)]
+
+
+def _csv_fieldnames_for_export(patents: list[dict]) -> list[str]:
+    max_deep_chunks = max(
+        (len(_chunk_csv_cell(p.get("deep_scrape_text", ""))) for p in patents),
+        default=1,
+    )
+    deep_fields = [
+        f"{DEEP_SCRAPE_FIELD_PREFIX}{i}"
+        for i in range(1, max_deep_chunks + 1)
+    ]
+    insert_at = EXPORT_FIELDS.index("deep_scraped_at")
+    return EXPORT_FIELDS[:insert_at] + deep_fields + EXPORT_FIELDS[insert_at:]
 
 def _apply_relevancy_filter(patents: list[dict], relevancy_filter: list[str] | None) -> list[dict]:
     """Filter patents by relevancy labels if a filter is active."""
@@ -1160,11 +1396,14 @@ def export_project_csv(project_id: int, req: ExportRequest = None, user_id: int 
     if not patents:
         raise HTTPException(status_code=404, detail="No patents match the selected relevancy filter")
 
+    fieldnames = _csv_fieldnames_for_export(patents)
     output = io.StringIO()
-    writer = csv.DictWriter(output, fieldnames=EXPORT_FIELDS, extrasaction="ignore")
+    writer = csv.DictWriter(output, fieldnames=fieldnames, extrasaction="ignore")
     writer.writeheader()
     for p in patents:
         row = {f: p.get(f, "") for f in EXPORT_FIELDS}
+        for index, chunk in enumerate(_chunk_csv_cell(p.get("deep_scrape_text", "")), start=1):
+            row[f"{DEEP_SCRAPE_FIELD_PREFIX}{index}"] = chunk
         row["confidence_score"] = (
             f"{p['confidence_score']:.2f}" if p.get("confidence_score") is not None else ""
         )
@@ -1177,131 +1416,6 @@ def export_project_csv(project_id: int, req: ExportRequest = None, user_id: int 
         media_type="text/csv",
         headers={"Content-Disposition": f"attachment; filename={filename}"},
     )
-
-
-@app.post("/api/projects/{project_id}/export/pdf")
-def export_project_pdf(project_id: int, req: ExportRequest = None, user_id: int = Depends(get_current_user_id)):
-    if not verify_project_ownership(project_id, user_id):
-        raise HTTPException(status_code=403, detail="Access denied")
-    req = req or ExportRequest()
-    patents = get_patents_by_ids(req.patent_ids, user_id) if req.patent_ids else get_all_project_patents(project_id, user_id)
-    if not patents:
-        raise HTTPException(status_code=404, detail="No patents found to export")
-
-    patents = _enrich_relevancy(patents)
-    patents = _apply_relevancy_filter(patents, req.relevancy_filter)
-    if not patents:
-        raise HTTPException(status_code=404, detail="No patents match the selected relevancy filter")
-
-    try:
-        from fpdf import FPDF
-        from fpdf.enums import XPos, YPos
-        import textwrap
-
-        def _safe(text) -> str:
-            return str(text or "").encode("latin-1", errors="replace").decode("latin-1")
-
-        def _count_lines(text: str, col_w: float, fs: int) -> int:
-            chars = max(1, int(col_w / (fs * 0.38)))
-            return len(textwrap.wrap(text, width=chars) or [""])
-
-        RELEVANCY_COLORS = {
-            "Red":      (220, 50, 50),
-            "Yellow":   (200, 160, 0),
-            "Green":    (40, 160, 80),
-            "Unaudited":(120, 120, 120),
-        }
-
-        pdf = FPDF(orientation="L", unit="mm", format="A4")
-        pdf.set_auto_page_break(auto=True, margin=15)
-        pdf.add_page()
-
-        # Header
-        pdf.set_font("Helvetica", "B", 14)
-        pdf.set_fill_color(30, 50, 100)
-        pdf.set_text_color(255, 255, 255)
-        pdf.cell(0, 10, _safe("PatentLens Studio — Prior Art Report"),
-                 new_x=XPos.LMARGIN, new_y=YPos.NEXT, align="C", fill=True)
-        pdf.set_font("Helvetica", "", 9)
-        pdf.set_text_color(80, 80, 80)
-        pdf.cell(0, 6, _safe(
-            f"Project: {project_id}  |  Generated: {datetime.now().strftime('%Y-%m-%d %H:%M')}  |  Count: {len(patents)}"
-        ), new_x=XPos.LMARGIN, new_y=YPos.NEXT, align="C")
-        pdf.ln(4)
-
-        col_w = {"patent_id": 26, "keywords": 28, "title": 52,
-                 "relevancy": 22, "abstract": 92, "score": 14, "reasoning": 42}
-
-        def _header_row():
-            pdf.set_font("Helvetica", "B", 8)
-            pdf.set_fill_color(50, 80, 160)
-            pdf.set_text_color(255, 255, 255)
-            for col, w in col_w.items():
-                pdf.cell(w, 8, col.replace("_", " ").title(),
-                         border=1, fill=True, align="C")
-            pdf.ln()
-
-        _header_row()
-        pdf.set_font("Helvetica", "", 7)
-        fills = [(245, 247, 255), (255, 255, 255)]
-
-        for i, row in enumerate(patents):
-            r, g, b = fills[i % 2]
-            pdf.set_fill_color(r, g, b)
-            pdf.set_text_color(20, 20, 20)
-            relevancy_label = row.get("relevancy", "Unaudited")
-            vals = {
-                "patent_id": _safe(row.get("patent_id", "")),
-                "keywords":  _safe(row.get("keywords", "")),
-                "title":     _safe(row.get("title", "")),
-                "relevancy": _safe(relevancy_label),
-                "abstract":  _safe(row.get("abstract", "")),
-                "score":     _safe(f"{row['confidence_score']:.2f}" if row.get("confidence_score") is not None else "—"),
-                "reasoning": _safe(row.get("ai_reasoning", "")),
-            }
-            row_h = max(
-                _count_lines(vals["title"], col_w["title"], 7),
-                _count_lines(vals["abstract"], col_w["abstract"], 7),
-                _count_lines(vals["reasoning"], col_w["reasoning"], 7),
-                1,
-            ) * 3.5 + 2
-
-            x0, y0 = pdf.get_x(), pdf.get_y()
-            if y0 + row_h > 190:
-                pdf.add_page()
-                _header_row()
-                pdf.set_font("Helvetica", "", 7)
-                pdf.set_fill_color(r, g, b)
-                pdf.set_text_color(20, 20, 20)
-                x0, y0 = pdf.get_x(), pdf.get_y()
-
-            offset = 0
-            for col, w in col_w.items():
-                if col == "relevancy":
-                    rc = RELEVANCY_COLORS.get(relevancy_label, (120, 120, 120))
-                    pdf.set_text_color(*rc)
-                    pdf.set_font("Helvetica", "B", 7)
-                else:
-                    pdf.set_text_color(20, 20, 20)
-                    pdf.set_font("Helvetica", "", 7)
-                pdf.multi_cell(w, row_h, vals[col], border=1, fill=(col != "relevancy"),
-                               align="C" if col in ("score", "relevancy") else "L",
-                               new_x=XPos.RIGHT, new_y=YPos.TOP, max_line_height=3.5)
-                offset += w
-                pdf.set_xy(x0 + offset, y0)
-            pdf.ln(row_h)
-
-        pdf_bytes = pdf.output()
-        filename = f"patentlens_project{project_id}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf"
-        return StreamingResponse(
-            io.BytesIO(pdf_bytes),
-            media_type="application/pdf",
-            headers={"Content-Disposition": f"attachment; filename={filename}"},
-        )
-    except Exception as e:
-        logger.error("[API] PDF export failed: %s", e, exc_info=True)
-        raise HTTPException(status_code=500, detail=f"PDF generation failed: {str(e)}")
-
 
 @app.get("/favicon.ico", include_in_schema=False)
 async def favicon():

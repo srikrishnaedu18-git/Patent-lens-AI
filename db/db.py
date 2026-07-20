@@ -136,6 +136,8 @@ def init_db():
         title TEXT NOT NULL,
         abstract TEXT NOT NULL,
         url TEXT NOT NULL,
+        deep_scrape_text TEXT,
+        deep_scraped_at TIMESTAMP,
         confidence_score REAL,
         ai_reasoning TEXT,
         overlap_reasons TEXT,
@@ -156,6 +158,8 @@ def init_db():
         ("searches", "ai_cpc_codes", "TEXT"),
         ("searches", "ai_rationale", "TEXT"),
         ("patents",  "source",           "TEXT DEFAULT 'Google Patents'"),
+        ("patents",  "deep_scrape_text", "TEXT"),
+        ("patents",  "deep_scraped_at",  "TIMESTAMP"),
         ("patents",  "confidence_score", "REAL"),
         ("patents",  "ai_reasoning",     "TEXT"),
         ("patents",  "overlap_reasons",   "TEXT"),
@@ -563,6 +567,33 @@ def update_patent_audit(
         conn.commit()
     except Exception as e:
         logger.error("[DB] update_patent_audit failed for patent_id=%d: %s", patent_id, e, exc_info=True)
+        raise
+    finally:
+        conn.close()
+
+
+def update_patent_deep_scrape(
+    patent_id: int,
+    deep_scrape_text: str,
+    user_id: int = None,
+):
+    if user_id is not None and not verify_patent_ownership(patent_id, user_id):
+        raise PermissionError("Access denied")
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    try:
+        ph = sql_placeholder()
+        cursor.execute(
+            f"""
+            UPDATE patents
+            SET deep_scrape_text = {ph}, deep_scraped_at = CURRENT_TIMESTAMP
+            WHERE id = {ph};
+            """,
+            (deep_scrape_text, patent_id),
+        )
+        conn.commit()
+    except Exception as e:
+        logger.error("[DB] update_patent_deep_scrape failed for patent_id=%d: %s", patent_id, e, exc_info=True)
         raise
     finally:
         conn.close()

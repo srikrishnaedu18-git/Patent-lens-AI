@@ -861,6 +861,7 @@ input[type="checkbox"] {
   flex-direction: column;
   gap: 12px;
   flex-grow: 1;
+  cursor: pointer;
 }
 
 .patent-card:hover {
@@ -1540,20 +1541,6 @@ button.stage-pill#pill-auditing:hover {
   line-height: 1.4;
 }
 
-.patent-source-badge {
-  display: inline-flex;
-  align-items: center;
-  min-height: 22px;
-  padding: 3px 8px;
-  border-radius: 999px;
-  border: 1px solid var(--border-color);
-  color: var(--text-secondary);
-  background-color: var(--bg-primary);
-  font-size: 0.72rem;
-  font-weight: 700;
-  white-space: nowrap;
-}
-
 /* History view: AI search metadata display */
 .ai-meta-display {
   background-color: var(--bg-primary);
@@ -1746,7 +1733,8 @@ button.stage-pill#pill-auditing:hover {
 }
 
 .patent-card.relevancy-unaudited {
-  border-left-color: var(--text-muted);
+  border-left-color: #f59e0b;
+  background: linear-gradient(90deg, rgba(245, 158, 11, 0.025) 0%, var(--bg-secondary) 100%);
 }
 
 /* Relevancy Badges */
@@ -1780,33 +1768,183 @@ button.stage-pill#pill-auditing:hover {
 }
 
 .relevancy-badge--unaudited {
-  background-color: var(--accent-bg);
-  color: var(--text-muted);
-  border: 1px solid var(--border-color);
+  background-color: #fff7e6;
+  color: #7c4a03;
+  border: 1px solid #f7c35f;
 }
 
-/* AI Audit Trigger button on run header card */
-.btn-ai-audit-trigger {
+/* Global AI Audit button in history toolbar */
+.btn-ai-audit-global {
   font-family: var(--font-family);
-  font-size: 0.75rem;
-  font-weight: 600;
+  font-size: 0.82rem;
+  font-weight: 700;
   color: #ffffff !important;
   background: linear-gradient(135deg, var(--accent), #7928ca);
   border: none;
   border-radius: var(--radius-sm);
-  padding: 6px 12px;
+  padding: 9px 16px;
   cursor: pointer;
   transition: transform var(--transition-fast), filter var(--transition-fast);
   box-shadow: 0 4px 10px rgba(121, 40, 202, 0.2);
 }
 
-.btn-ai-audit-trigger:hover {
+.btn-ai-audit-global:hover:not(:disabled) {
   filter: brightness(1.1);
   transform: translateY(-1px);
 }
 
-.btn-ai-audit-trigger:active {
+.btn-ai-audit-global:active:not(:disabled) {
   transform: translateY(0);
+}
+
+.btn-ai-audit-global:disabled {
+  cursor: not-allowed;
+  opacity: 0.65;
+}
+
+.btn-deep-scrape-global {
+  font-family: var(--font-family);
+  font-size: 0.82rem;
+  font-weight: 700;
+  color: var(--text-primary);
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-sm);
+  padding: 9px 16px;
+  cursor: pointer;
+  transition: transform var(--transition-fast), border-color var(--transition-fast), color var(--transition-fast);
+}
+
+.btn-deep-scrape-global:hover:not(:disabled) {
+  border-color: var(--accent);
+  color: var(--accent);
+  transform: translateY(-1px);
+}
+
+.btn-deep-scrape-global:disabled {
+  cursor: not-allowed;
+  opacity: 0.65;
+}
+
+.btn-card-deep-scrape {
+  font-family: var(--font-family);
+  font-size: 0.72rem;
+  font-weight: 700;
+  border-radius: 12px;
+  padding: 4px 10px;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background-color var(--transition-fast), color var(--transition-fast);
+}
+
+.btn-card-deep-scrape--pending {
+  color: #7c4a03;
+  background: #fff7e6;
+  border: 1px solid #f7c35f;
+}
+
+.btn-card-deep-scrape--pending:hover {
+  background: #f59e0b;
+  border-color: #f59e0b;
+  color: #ffffff;
+}
+
+.btn-card-deep-scrape--done {
+  color: #047857;
+  background: #ecfdf5;
+  border: 1px solid #86efac;
+}
+
+.btn-card-deep-scrape--done:hover {
+  background: #10b981;
+  border-color: #10b981;
+  color: #ffffff;
+}
+
+.modal-patent-details {
+  width: min(1120px, calc(100vw - 48px));
+  max-width: 1120px;
+  max-height: 88vh;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+.patent-details-body {
+  overflow-y: auto;
+  padding: 24px 28px 28px;
+}
+
+.patent-detail-meta {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-bottom: 18px;
+}
+
+.patent-detail-id-link {
+  min-height: 30px;
+  padding: 6px 12px;
+  gap: 6px;
+  border: 1px solid rgba(79, 111, 255, 0.18);
+  box-shadow: 0 1px 0 rgba(15, 23, 42, 0.04);
+}
+
+.patent-detail-id-link svg {
+  flex-shrink: 0;
+}
+
+.deep-scrape-status {
+  font-size: 0.78rem;
+  color: var(--text-secondary);
+  background: var(--bg-primary);
+  border: 1px solid var(--border-color);
+  border-radius: 12px;
+  padding: 3px 10px;
+}
+
+.deep-scrape-status.muted {
+  color: var(--text-muted);
+}
+
+.patent-detail-section {
+  border-top: 1px solid var(--border-color);
+  padding: 16px 0;
+}
+
+.patent-detail-section h4 {
+  font-size: 0.88rem;
+  margin-bottom: 8px;
+  color: var(--text-primary);
+}
+
+.patent-detail-section p {
+  color: var(--text-secondary);
+  line-height: 1.7;
+  white-space: pre-wrap;
+}
+
+.patent-detail-section-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 8px;
+}
+
+.patent-detail-deep pre {
+  margin: 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: var(--text-secondary);
+  background: var(--bg-primary);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  padding: 14px;
+  line-height: 1.6;
+  font-family: var(--font-family);
+  font-size: 0.86rem;
 }
 
 /* Saved Keyword items styling inside modal */

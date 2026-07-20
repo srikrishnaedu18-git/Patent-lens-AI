@@ -1,658 +1,1492 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en" data-theme="dark">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>PatentLens Studio</title>
-  <meta name="description" content="AI-powered prior art patent search with Gemini intelligence and real-time scraping.">
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="style.css?v=2">
-</head>
-<body>
-  <!-- Auth Overlay -->
-  <div id="auth-overlay" class="auth-overlay">
-    <div class="auth-card">
-      <div class="auth-header">
-        <svg class="logo-icon" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-          <path d="M12 22C17.5228 22 22 17.5228 22 12C22 6.47715 17.5228 2 12 2C6.47715 2 2 6.47715 2 12C2 17.5228 6.47715 22 12 22Z" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-          <path d="M12 6V12L16 14" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-        </svg>
-        <span class="logo-text">PatentLens <span class="logo-badge">Studio</span></span>
-      </div>
-      <h2 id="auth-title">Welcome Back</h2>
-      <p id="auth-subtitle">Please enter your details to sign in</p>
-      
-      <form id="auth-form" class="auth-form">
-        <div class="input-group">
-          <label for="auth-username">Username</label>
-          <input type="text" id="auth-username" required placeholder="Enter username">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>PatentLens Studio</title>
+    <meta
+      name="description"
+      content="AI-powered prior art patent search with Gemini intelligence and real-time scraping."
+    />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="style.css?v=2" />
+  </head>
+  <body>
+    <!-- Auth Overlay -->
+    <div id="auth-overlay" class="auth-overlay">
+      <div class="auth-card">
+        <div class="auth-header">
+          <svg
+            class="logo-icon"
+            viewBox="0 0 24 24"
+            fill="none"
+            xmlns="http://www.w3.org/2000/svg"
+          >
+            <path
+              d="M12 22C17.5228 22 22 17.5228 22 12C22 6.47715 17.5228 2 12 2C6.47715 2 2 6.47715 2 12C2 17.5228 6.47715 22 12 22Z"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            />
+            <path
+              d="M12 6V12L16 14"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            />
+          </svg>
+          <span class="logo-text"
+            >PatentLens <span class="logo-badge">Studio</span></span
+          >
         </div>
-        <div class="input-group">
-          <label for="auth-password">Password</label>
-          <input type="password" id="auth-password" required placeholder="••••••••">
+        <h2 id="auth-title">Welcome Back</h2>
+        <p id="auth-subtitle">Please enter your details to sign in</p>
+
+        <form id="auth-form" class="auth-form">
+          <div class="input-group">
+            <label for="auth-username">Username</label>
+            <input
+              type="text"
+              id="auth-username"
+              required
+              placeholder="Enter username"
+            />
+          </div>
+          <div class="input-group">
+            <label for="auth-password">Password</label>
+            <input
+              type="password"
+              id="auth-password"
+              required
+              placeholder="••••••••"
+            />
+          </div>
+          <div id="auth-error-msg" class="auth-error-msg hidden"></div>
+          <button
+            type="submit"
+            id="btn-auth-submit"
+            class="btn-primary auth-submit"
+          >
+            Sign In
+          </button>
+        </form>
+
+        <div class="auth-footer">
+          <span id="auth-toggle-text">Don't have an account?</span>
+          <button id="btn-auth-toggle" class="btn-link">
+            Create an account
+          </button>
         </div>
-        <div id="auth-error-msg" class="auth-error-msg hidden"></div>
-        <button type="submit" id="btn-auth-submit" class="btn-primary auth-submit">Sign In</button>
-      </form>
-      
-      <div class="auth-footer">
-        <span id="auth-toggle-text">Don't have an account?</span>
-        <button id="btn-auth-toggle" class="btn-link">Create an account</button>
       </div>
     </div>
-  </div>
 
-  <div class="app-container">
-
-    <!-- Sidebar -->
-    <aside class="sidebar">
-      <div class="sidebar-header">
-        <div class="logo-container">
-          <svg class="logo-icon" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-            <path d="M12 22C17.5228 22 22 17.5228 22 12C22 6.47715 17.5228 2 12 2C6.47715 2 2 6.47715 2 12C2 17.5228 6.47715 22 12 22Z" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-            <path d="M12 6V12L16 14" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-          </svg>
-          <span class="logo-text">PatentLens</span>
-          <span class="logo-badge">Studio</span>
-        </div>
-        <button id="btn-new-project" class="btn-primary" aria-label="Create New Project">
-          <svg class="icon" viewBox="0 0 24 24" fill="none"><path d="M12 5V19" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><path d="M5 12H19" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
-          New Project
-        </button>
-      </div>
-      <div class="projects-list-container">
-        <div class="section-title">Projects</div>
-        <ul id="projects-list" class="projects-list"></ul>
-      </div>
-      <div class="sidebar-footer">
-        <div id="user-profile-section" class="user-profile-section">
-          <span id="user-display-name" class="user-display-name">Username</span>
-          <button id="btn-logout" class="btn-logout" title="Sign Out" aria-label="Sign Out">
-            <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-              <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9"/>
+    <div class="app-container">
+      <!-- Sidebar -->
+      <aside class="sidebar">
+        <div class="sidebar-header">
+          <div class="logo-container">
+            <svg
+              class="logo-icon"
+              viewBox="0 0 24 24"
+              fill="none"
+              xmlns="http://www.w3.org/2000/svg"
+            >
+              <path
+                d="M12 22C17.5228 22 22 17.5228 22 12C22 6.47715 17.5228 2 12 2C6.47715 2 2 6.47715 2 12C2 17.5228 6.47715 22 12 22Z"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              />
+              <path
+                d="M12 6V12L16 14"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              />
             </svg>
-          </button>
-        </div>
-        <span class="footer-meta">v3.0 • AI-Powered</span>
-      </div>
-    </aside>
-
-    <!-- Main Workspace -->
-    <main class="main-content">
-      <header class="top-bar">
-        <div class="current-project-info">
-          <h1 id="active-project-title">Select a project</h1>
-          <span id="active-project-date" class="meta-text"></span>
-        </div>
-        <div class="top-bar-actions">
-          <!-- Saved Keywords -->
-          <button id="btn-saved-keywords" class="btn-icon" aria-label="Saved Search Strategies" title="Saved Search Strategies">
-            <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-              <path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/>
-            </svg>
-          </button>
-          <!-- India Patent Options -->
-          <button id="btn-india-options" class="btn-icon" aria-label="Indian Patent Search Options" title="Indian Patent Search Options">
-            <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-              <rect x="3" y="3" width="18" height="18" rx="2" ry="2"/>
-              <line x1="9" y1="3" x2="9" y2="21"/>
-            </svg>
-          </button>
-          <!-- Theme toggle FIRST, then Settings -->
-          <button id="theme-toggle" class="btn-icon" aria-label="Toggle Theme">
-            <svg id="theme-icon-sun" class="icon" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="5" stroke="currentColor" stroke-width="2"/><path d="M12 1V3M12 21V23M4.22 4.22L5.64 5.64M18.36 18.36L19.78 19.78M1 12H3M21 12H23M4.22 19.78L5.64 18.36M18.36 5.64L19.78 4.22" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
-            <svg id="theme-icon-moon" class="icon" viewBox="0 0 24 24" fill="none"><path d="M21 12.79A9 9 0 1111.21 3 7 7 0 0021 12.79z" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
-          </button>
-          <button id="btn-settings" class="btn-icon" aria-label="Pipeline Settings" title="Pipeline Settings">
-            <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-              <circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>
-            </svg>
-          </button>
-        </div>
-      </header>
-
-      <div class="workspace-viewport">
-        <!-- Empty state -->
-        <div id="empty-state" class="empty-state">
-          <div class="empty-illustration">
-            <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-              <path d="M19 11H5M19 11C20.1046 11 21 11.8954 21 13V19C21 20.1046 20.1046 21 19 21H5C3.89543 21 3 20.1046 3 19V13C3 11.8954 3.89543 11 5 11M19 11V9C19 5.13401 15.866 2 12 2C8.13401 2 5 5.13401 5 9V11" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-            </svg>
+            <span class="logo-text">PatentLens</span>
+            <span class="logo-badge">Studio</span>
           </div>
-          <h2>Begin Patent Search</h2>
-          <p>Create a new project or select one to start searching for prior art.</p>
+          <button
+            id="btn-new-project"
+            class="btn-primary"
+            aria-label="Create New Project"
+          >
+            <svg class="icon" viewBox="0 0 24 24" fill="none">
+              <path
+                d="M12 5V19"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+              />
+              <path
+                d="M5 12H19"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+              />
+            </svg>
+            New Project
+          </button>
         </div>
+        <div class="projects-list-container">
+          <div class="section-title">Projects</div>
+          <ul id="projects-list" class="projects-list"></ul>
+        </div>
+        <div class="sidebar-footer">
+          <div id="user-profile-section" class="user-profile-section">
+            <span id="user-display-name" class="user-display-name"
+              >Username</span
+            >
+            <button
+              id="btn-logout"
+              class="btn-logout"
+              title="Sign Out"
+              aria-label="Sign Out"
+            >
+              <svg
+                class="icon"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              >
+                <path
+                  d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9"
+                />
+              </svg>
+            </button>
+          </div>
+        </div>
+      </aside>
 
-        <!-- Active project panel -->
-        <div id="project-panel" class="project-panel hidden">
+      <!-- Main Workspace -->
+      <main class="main-content">
+        <header class="top-bar">
+          <div class="current-project-info">
+            <h1 id="active-project-title">Select a project</h1>
+            <span id="active-project-date" class="meta-text"></span>
+          </div>
+          <div class="top-bar-actions">
+            <!-- Saved Keywords -->
+            <button
+              id="btn-saved-keywords"
+              class="btn-icon"
+              aria-label="Saved Search Strategies"
+              title="Saved Search Strategies"
+            >
+              <svg
+                class="icon"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              >
+                <path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z" />
+              </svg>
+            </button>
+            <!-- India Patent Options -->
+            <button
+              id="btn-india-options"
+              class="btn-icon"
+              aria-label="Indian Patent Search Options"
+              title="Indian Patent Search Options"
+            >
+              <svg
+                class="icon"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              >
+                <rect x="3" y="3" width="18" height="18" rx="2" ry="2" />
+                <line x1="9" y1="3" x2="9" y2="21" />
+              </svg>
+            </button>
+            <!-- Theme toggle FIRST, then Settings -->
+            <button
+              id="theme-toggle"
+              class="btn-icon"
+              aria-label="Toggle Theme"
+            >
+              <svg
+                id="theme-icon-sun"
+                class="icon"
+                viewBox="0 0 24 24"
+                fill="none"
+              >
+                <circle
+                  cx="12"
+                  cy="12"
+                  r="5"
+                  stroke="currentColor"
+                  stroke-width="2"
+                />
+                <path
+                  d="M12 1V3M12 21V23M4.22 4.22L5.64 5.64M18.36 18.36L19.78 19.78M1 12H3M21 12H23M4.22 19.78L5.64 18.36M18.36 5.64L19.78 4.22"
+                  stroke="currentColor"
+                  stroke-width="2"
+                  stroke-linecap="round"
+                />
+              </svg>
+              <svg
+                id="theme-icon-moon"
+                class="icon"
+                viewBox="0 0 24 24"
+                fill="none"
+              >
+                <path
+                  d="M21 12.79A9 9 0 1111.21 3 7 7 0 0021 12.79z"
+                  stroke="currentColor"
+                  stroke-width="2"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                />
+              </svg>
+            </button>
+            <button
+              id="btn-settings"
+              class="btn-icon"
+              aria-label="Pipeline Settings"
+              title="Pipeline Settings"
+            >
+              <svg
+                class="icon"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              >
+                <circle cx="12" cy="12" r="3" />
+                <path
+                  d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"
+                />
+              </svg>
+            </button>
+          </div>
+        </header>
 
-          <!-- Search Control Card -->
-          <section class="control-card">
-            <!-- Mode toggle -->
-            <div class="mode-toggle-bar">
-              <div class="mode-toggle-group" role="group" aria-label="Search mode">
-                <button id="btn-mode-manual" class="mode-btn active" data-mode="manual">
-                  <svg class="icon-sm" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
-                  Manual Keywords
-                </button>
-                <button id="btn-mode-ai" class="mode-btn" data-mode="ai">
-                  <svg class="icon-sm" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg>
-                  AI Auto-Generate
-                </button>
-              </div>
+        <div class="workspace-viewport">
+          <!-- Empty state -->
+          <div id="empty-state" class="empty-state">
+            <div class="empty-illustration">
+              <svg
+                viewBox="0 0 24 24"
+                fill="none"
+                xmlns="http://www.w3.org/2000/svg"
+              >
+                <path
+                  d="M19 11H5M19 11C20.1046 11 21 11.8954 21 13V19C21 20.1046 20.1046 21 19 21H5C3.89543 21 3 20.1046 3 19V13C3 11.8954 3.89543 11 5 11M19 11V9C19 5.13401 15.866 2 12 2C8.13401 2 5 5.13401 5 9V11"
+                  stroke="currentColor"
+                  stroke-width="2"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                />
+              </svg>
             </div>
+            <h2>Begin Patent Search</h2>
+            <p>
+              Create a new project or select one to start searching for prior
+              art.
+            </p>
+          </div>
 
-            <!-- Manual keyword panel -->
-            <div id="panel-manual" class="search-panel">
-              <div class="source-toggle-bar" style="margin-bottom: 20px;">
-                <div class="source-toggle-group" role="group" aria-label="Search source">
-                  <button type="button" id="btn-source-google" class="source-toggle-btn active" data-source="google">Google Patents</button>
-                  <button type="button" id="btn-source-india" class="source-toggle-btn" data-source="india">Indian Patents</button>
+          <!-- Active project panel -->
+          <div id="project-panel" class="project-panel hidden">
+            <!-- Search Control Card -->
+            <section class="control-card">
+              <!-- Mode toggle -->
+              <div class="mode-toggle-bar">
+                <div
+                  class="mode-toggle-group"
+                  role="group"
+                  aria-label="Search mode"
+                >
+                  <button
+                    id="btn-mode-manual"
+                    class="mode-btn active"
+                    data-mode="manual"
+                  >
+                    <svg
+                      class="icon-sm"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      stroke-width="2"
+                    >
+                      <path
+                        d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"
+                      />
+                      <path
+                        d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"
+                      />
+                    </svg>
+                    Manual Keywords
+                  </button>
+                  <button id="btn-mode-ai" class="mode-btn" data-mode="ai">
+                    <svg
+                      class="icon-sm"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      stroke-width="2"
+                    >
+                      <path d="M12 2L2 7l10 5 10-5-10-5z" />
+                      <path d="M2 17l10 5 10-5" />
+                      <path d="M2 12l10 5 10-5" />
+                    </svg>
+                    AI Auto-Generate
+                  </button>
                 </div>
               </div>
-              <form id="scrape-form-manual" class="scrape-form">
-                <!-- Google Patents Fields -->
-                <div id="group-keywords-google" class="source-fields-group">
-                  <p class="subtitle" style="margin-bottom: 12px;">Enter keywords separated by commas. Each keyword runs an independent scrape.</p>
+
+              <!-- Manual keyword panel -->
+              <div id="panel-manual" class="search-panel">
+                <div class="source-toggle-bar" style="margin-bottom: 20px">
+                  <div
+                    class="source-toggle-group"
+                    role="group"
+                    aria-label="Search source"
+                  >
+                    <button
+                      type="button"
+                      id="btn-source-google"
+                      class="source-toggle-btn active"
+                      data-source="google"
+                    >
+                      Google Patents
+                    </button>
+                    <button
+                      type="button"
+                      id="btn-source-india"
+                      class="source-toggle-btn"
+                      data-source="india"
+                    >
+                      Indian Patents
+                    </button>
+                  </div>
+                </div>
+                <form id="scrape-form-manual" class="scrape-form">
+                  <!-- Google Patents Fields -->
+                  <div id="group-keywords-google" class="source-fields-group">
+                    <p class="subtitle" style="margin-bottom: 12px">
+                      Enter keywords separated by commas. Each keyword runs an
+                      independent scrape.
+                    </p>
+                    <div class="form-group flex-grow">
+                      <label for="keywords-input">Keywords</label>
+                      <input
+                        type="text"
+                        id="keywords-input"
+                        placeholder="e.g. smart irrigation, IoT soil sensor, crop water management"
+                        autocomplete="off"
+                      />
+                    </div>
+                  </div>
+
+                  <!-- Indian Patents Fields -->
+                  <div
+                    id="group-keywords-india"
+                    class="source-fields-group hidden"
+                  >
+                    <div
+                      class="dynamic-rows-header"
+                      style="
+                        display: flex;
+                        justify-content: space-between;
+                        align-items: center;
+                        margin-bottom: 12px;
+                      "
+                    >
+                      <span
+                        class="field-label"
+                        style="font-weight: 600; font-size: 0.9rem"
+                        >Search Query Fields (Max 5)</span
+                      >
+                      <div style="display: flex; gap: 8px">
+                        <button
+                          type="button"
+                          id="btn-manual-india-add-row"
+                          class="btn-secondary btn-sm"
+                          style="
+                            padding: 6px 12px;
+                            font-size: 0.8rem;
+                            display: flex;
+                            align-items: center;
+                            gap: 4px;
+                          "
+                        >
+                          <svg
+                            class="icon-sm"
+                            viewBox="0 0 24 24"
+                            fill="none"
+                            style="width: 14px; height: 14px"
+                          >
+                            <path
+                              d="M12 5V19M5 12H19"
+                              stroke="currentColor"
+                              stroke-width="2"
+                              stroke-linecap="round"
+                            />
+                          </svg>
+                          Add Row
+                        </button>
+                        <button
+                          type="button"
+                          id="btn-manual-india-remove-row"
+                          class="btn-secondary btn-sm"
+                          style="
+                            padding: 6px 12px;
+                            font-size: 0.8rem;
+                            display: flex;
+                            align-items: center;
+                            gap: 4px;
+                            color: var(--danger);
+                            border-color: var(--danger);
+                          "
+                        >
+                          <svg
+                            class="icon-sm"
+                            viewBox="0 0 24 24"
+                            fill="none"
+                            style="width: 14px; height: 14px"
+                          >
+                            <path
+                              d="M19 7L5 7M10 11V17M14 11V17"
+                              stroke="currentColor"
+                              stroke-width="2"
+                              stroke-linecap="round"
+                            />
+                          </svg>
+                          Remove Row
+                        </button>
+                      </div>
+                    </div>
+                    <div
+                      id="manual-india-query-rows-container"
+                      class="india-query-rows-list"
+                      style="
+                        display: flex;
+                        flex-direction: column;
+                        gap: 12px;
+                        max-height: 250px;
+                        overflow-y: auto;
+                        padding-right: 4px;
+                        margin-bottom: 12px;
+                      "
+                    >
+                      <!-- Dynamically populated rows -->
+                    </div>
+                  </div>
+
                   <div class="form-group flex-grow">
-                    <label for="keywords-input">Keywords</label>
-                    <input type="text" id="keywords-input" placeholder="e.g. smart irrigation, IoT soil sensor, crop water management" autocomplete="off">
+                    <label for="manual-description-input"
+                      >Invention Description
+                      <span
+                        class="meta-text"
+                        style="
+                          text-transform: none;
+                          letter-spacing: 0;
+                          font-weight: 400;
+                        "
+                        >(used for AI audit comparisons)</span
+                      ></label
+                    >
+                    <textarea
+                      id="manual-description-input"
+                      rows="4"
+                      placeholder="Describe your invention in detail so the AI audit can compare each patent against your specific mechanism. E.g. 'A solar-powered drip irrigation controller using soil moisture sensors and IoT connectivity to dynamically regulate water flow...'"
+                    ></textarea>
+                  </div>
+                  <div class="form-row">
+                    <div class="form-group limit-group">
+                      <label for="limit-input-manual">Max Results</label>
+                      <input
+                        type="number"
+                        id="limit-input-manual"
+                        min="1"
+                        max="50"
+                        value="20"
+                      />
+                    </div>
+                    <button
+                      type="submit"
+                      id="btn-manual-scrape"
+                      class="btn-primary btn-submit"
+                    >
+                      <svg
+                        class="icon animate-spin hidden"
+                        id="spinner-manual"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                      >
+                        <circle
+                          cx="12"
+                          cy="12"
+                          r="10"
+                          stroke="currentColor"
+                          stroke-width="3"
+                          stroke-opacity="0.25"
+                        />
+                        <path
+                          d="M4 12C4 7.58172 7.58172 4 12 4"
+                          stroke="currentColor"
+                          stroke-width="3"
+                          stroke-linecap="round"
+                        />
+                      </svg>
+                      <span id="btn-manual-text">Scrape Patents</span>
+                    </button>
+                  </div>
+                </form>
+              </div>
+
+              <!-- AI mode panel -->
+              <div id="panel-ai" class="search-panel hidden">
+                <!-- Step 1: Requirement input -->
+                <div id="ai-step-input" class="ai-step">
+                  <div class="form-group">
+                    <label for="requirement-input"
+                      >Product Requirement / Invention Description</label
+                    >
+                    <textarea
+                      id="requirement-input"
+                      rows="5"
+                      placeholder="Describe the core mechanism of your invention in technical detail. E.g. 'A pressure-sensitive automotive seat belt tensioner that uses piezoelectric sensors to detect occupant weight and dynamically adjusts pre-tension force...'"
+                    ></textarea>
+                  </div>
+                  <div class="form-row">
+                    <div class="form-group limit-group">
+                      <label for="limit-input-ai">Max Results / Query</label>
+                      <input
+                        type="number"
+                        id="limit-input-ai"
+                        min="1"
+                        max="50"
+                        value="20"
+                      />
+                    </div>
+                    <button
+                      type="button"
+                      id="btn-generate-queries"
+                      class="btn-ai btn-submit"
+                    >
+                      <svg
+                        class="icon animate-spin hidden"
+                        id="spinner-ai"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                      >
+                        <circle
+                          cx="12"
+                          cy="12"
+                          r="10"
+                          stroke="currentColor"
+                          stroke-width="3"
+                          stroke-opacity="0.25"
+                        />
+                        <path
+                          d="M4 12C4 7.58172 7.58172 4 12 4"
+                          stroke="currentColor"
+                          stroke-width="3"
+                          stroke-linecap="round"
+                        />
+                      </svg>
+                      <svg
+                        class="icon-sm"
+                        id="ai-btn-icon"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        stroke-width="2"
+                      >
+                        <path d="M12 2L2 7l10 5 10-5-10-5z" />
+                        <path d="M2 17l10 5 10-5" />
+                        <path d="M2 12l10 5 10-5" />
+                      </svg>
+                      <span id="btn-generate-text"
+                        >Generate Queries with AI</span
+                      >
+                    </button>
                   </div>
                 </div>
 
-                <!-- Indian Patents Fields -->
-                <div id="group-keywords-india" class="source-fields-group hidden">
-                  <div class="dynamic-rows-header" style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
-                    <span class="field-label" style="font-weight: 600; font-size: 0.9rem;">Search Query Fields (Max 5)</span>
-                    <div style="display: flex; gap: 8px;">
-                      <button type="button" id="btn-manual-india-add-row" class="btn-secondary btn-sm" style="padding: 6px 12px; font-size: 0.8rem; display: flex; align-items: center; gap: 4px;">
-                        <svg class="icon-sm" viewBox="0 0 24 24" fill="none" style="width:14px; height:14px;"><path d="M12 5V19M5 12H19" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg> Add Row
+                <!-- Step 2: Query review & confirm -->
+                <div id="ai-step-review" class="ai-step hidden">
+                  <div class="query-review-panel">
+                    <div class="query-review-header">
+                      <div class="query-review-title">
+                        <svg
+                          class="icon-sm"
+                          viewBox="0 0 24 24"
+                          fill="none"
+                          stroke="currentColor"
+                          stroke-width="2"
+                        >
+                          <path
+                            d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"
+                          />
+                        </svg>
+                        AI-Generated Search Queries
+                        <span class="badge-ai">Gemini</span>
+                      </div>
+                      <button
+                        type="button"
+                        id="btn-back-to-input"
+                        class="btn-ghost-sm"
+                      >
+                        ← Edit Requirement
                       </button>
-                      <button type="button" id="btn-manual-india-remove-row" class="btn-secondary btn-sm" style="padding: 6px 12px; font-size: 0.8rem; display: flex; align-items: center; gap: 4px; color: var(--danger); border-color: var(--danger);">
-                        <svg class="icon-sm" viewBox="0 0 24 24" fill="none" style="width:14px; height:14px;"><path d="M19 7L5 7M10 11V17M14 11V17" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg> Remove Row
+                    </div>
+
+                    <div id="ai-rationale" class="ai-rationale-text"></div>
+
+                    <div class="query-list-label">
+                      Search Queries
+                      <span class="meta-text">(click to edit)</span>
+                    </div>
+                    <div
+                      id="editable-queries"
+                      class="editable-queries-list"
+                    ></div>
+
+                    <div class="cpc-section">
+                      <div class="query-list-label">Suggested CPC Codes</div>
+                      <div id="cpc-tags" class="cpc-tags-list"></div>
+                    </div>
+
+                    <div class="review-actions">
+                      <button
+                        type="button"
+                        id="btn-confirm-search"
+                        class="btn-primary btn-submit"
+                      >
+                        <svg
+                          class="icon animate-spin hidden"
+                          id="spinner-confirm"
+                          viewBox="0 0 24 24"
+                          fill="none"
+                        >
+                          <circle
+                            cx="12"
+                            cy="12"
+                            r="10"
+                            stroke="currentColor"
+                            stroke-width="3"
+                            stroke-opacity="0.25"
+                          />
+                          <path
+                            d="M4 12C4 7.58172 7.58172 4 12 4"
+                            stroke="currentColor"
+                            stroke-width="3"
+                            stroke-linecap="round"
+                          />
+                        </svg>
+                        <span id="btn-confirm-text"
+                          >Confirm &amp; Start Search</span
+                        >
                       </button>
                     </div>
                   </div>
-                  <div id="manual-india-query-rows-container" class="india-query-rows-list" style="display: flex; flex-direction: column; gap: 12px; max-height: 250px; overflow-y: auto; padding-right: 4px; margin-bottom: 12px;">
-                    <!-- Dynamically populated rows -->
-                  </div>
                 </div>
+              </div>
+            </section>
 
-                <div class="form-group flex-grow">
-                  <label for="manual-description-input">Invention Description <span class="meta-text" style="text-transform:none; letter-spacing:0; font-weight:400;">(used for AI audit comparisons)</span></label>
-                  <textarea id="manual-description-input" rows="4" placeholder="Describe your invention in detail so the AI audit can compare each patent against your specific mechanism. E.g. 'A solar-powered drip irrigation controller using soil moisture sensors and IoT connectivity to dynamically regulate water flow...'"></textarea>
+            <!-- Live Progress Feed -->
+            <div id="live-feed" class="live-feed hidden">
+              <div class="live-feed-header">
+                <div class="live-feed-title">
+                  <span class="pulse-dot"></span>
+                  Live Pipeline Log
                 </div>
-                <div class="form-row">
-                  <div class="form-group limit-group">
-                    <label for="limit-input-manual">Max Results</label>
-                    <input type="number" id="limit-input-manual" min="1" max="50" value="20">
+                <div
+                  class="live-feed-header-right"
+                  style="display: flex; align-items: center; gap: 14px"
+                >
+                  <div class="stage-pills" id="stage-pills">
+                    <span class="stage-pill" id="pill-planning">Planning</span>
+                    <span class="stage-pill" id="pill-scraping">Scraping</span>
+                    <button type="button" class="stage-pill" id="pill-auditing">
+                      Auditing
+                    </button>
+                    <span class="stage-pill" id="pill-saving">Saving</span>
+                    <span class="stage-pill" id="pill-complete">Done</span>
                   </div>
-                  <button type="submit" id="btn-manual-scrape" class="btn-primary btn-submit">
-                    <svg class="icon animate-spin hidden" id="spinner-manual" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="10" stroke="currentColor" stroke-width="3" stroke-opacity="0.25"/><path d="M4 12C4 7.58172 7.58172 4 12 4" stroke="currentColor" stroke-width="3" stroke-linecap="round"/></svg>
-                    <span id="btn-manual-text">Scrape Patents</span>
-                  </button>
-                </div>
-              </form>
-            </div>
-
-            <!-- AI mode panel -->
-            <div id="panel-ai" class="search-panel hidden">
-
-              <!-- Step 1: Requirement input -->
-              <div id="ai-step-input" class="ai-step">
-                <div class="form-group">
-                  <label for="requirement-input">Product Requirement / Invention Description</label>
-                  <textarea id="requirement-input" rows="5" placeholder="Describe the core mechanism of your invention in technical detail. E.g. 'A pressure-sensitive automotive seat belt tensioner that uses piezoelectric sensors to detect occupant weight and dynamically adjusts pre-tension force...'"></textarea>
-                </div>
-                <div class="form-row">
-                  <div class="form-group limit-group">
-                    <label for="limit-input-ai">Max Results / Query</label>
-                    <input type="number" id="limit-input-ai" min="1" max="50" value="20">
-                  </div>
-                  <button type="button" id="btn-generate-queries" class="btn-ai btn-submit">
-                    <svg class="icon animate-spin hidden" id="spinner-ai" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="10" stroke="currentColor" stroke-width="3" stroke-opacity="0.25"/><path d="M4 12C4 7.58172 7.58172 4 12 4" stroke="currentColor" stroke-width="3" stroke-linecap="round"/></svg>
-                    <svg class="icon-sm" id="ai-btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg>
-                    <span id="btn-generate-text">Generate Queries with AI</span>
+                  <button
+                    type="button"
+                    id="btn-terminate-scrape"
+                    class="btn-terminate hidden"
+                    title="Stop scrape after current keyword"
+                  >
+                    <svg
+                      class="icon-sm"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      stroke-width="2"
+                    >
+                      <rect x="3" y="3" width="18" height="18" rx="2" />
+                    </svg>
+                    Stop
                   </button>
                 </div>
               </div>
+              <div id="live-log" class="live-log-box">
+                <!-- SSE messages stream in here -->
+              </div>
+              <div
+                id="audit-progress-bar-wrap"
+                class="audit-progress-wrap hidden"
+              >
+                <div class="audit-progress-label">
+                  <span id="audit-progress-text">Auditing...</span>
+                  <span id="audit-progress-pct">0%</span>
+                </div>
+                <div class="audit-progress-track">
+                  <div
+                    id="audit-progress-bar"
+                    class="audit-progress-fill"
+                    style="width: 0%"
+                  ></div>
+                </div>
+              </div>
+            </div>
 
-              <!-- Step 2: Query review & confirm -->
-              <div id="ai-step-review" class="ai-step hidden">
-                <div class="query-review-panel">
-                  <div class="query-review-header">
-                    <div class="query-review-title">
-                      <svg class="icon-sm" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
-                      AI-Generated Search Queries
-                      <span class="badge-ai">Gemini</span>
-                    </div>
-                    <button type="button" id="btn-back-to-input" class="btn-ghost-sm">← Edit Requirement</button>
+            <!-- Novelty Audit Dashboard -->
+            <div id="novelty-results-panel" class="novelty-panel hidden">
+              <div class="novelty-panel-header" style="margin-bottom: 16px">
+                <h3 style="font-size: 1.1rem; font-weight: 700">
+                  Novelty &amp; Relevancy Audit Live-Dashboard
+                </h3>
+                <span
+                  class="meta-text"
+                  style="font-size: 0.8rem; color: var(--text-secondary)"
+                  >Real-time comparison of scraped patent abstracts against
+                  active keywords/description</span
+                >
+              </div>
+              <div class="novelty-columns">
+                <div class="novelty-col novelty-col--red">
+                  <div class="novelty-col-title-bar">
+                    <span class="status-marker bg-danger"></span>
+                    Low Novelty / Direct Match (Red)
                   </div>
-
-                  <div id="ai-rationale" class="ai-rationale-text"></div>
-
-                  <div class="query-list-label">Search Queries <span class="meta-text">(click to edit)</span></div>
-                  <div id="editable-queries" class="editable-queries-list"></div>
-
-                  <div class="cpc-section">
-                    <div class="query-list-label">Suggested CPC Codes</div>
-                    <div id="cpc-tags" class="cpc-tags-list"></div>
+                  <div
+                    id="novelty-list-red"
+                    class="novelty-list-container"
+                  ></div>
+                </div>
+                <div class="novelty-col novelty-col--yellow">
+                  <div class="novelty-col-title-bar">
+                    <span class="status-marker bg-warning"></span>
+                    Moderate Overlap (Yellow)
                   </div>
+                  <div
+                    id="novelty-list-yellow"
+                    class="novelty-list-container"
+                  ></div>
+                </div>
+                <div class="novelty-col novelty-col--green">
+                  <div class="novelty-col-title-bar">
+                    <span class="status-marker bg-success"></span>
+                    High Novelty (Green Gap)
+                  </div>
+                  <div
+                    id="novelty-list-green"
+                    class="novelty-list-container"
+                  ></div>
+                </div>
+              </div>
+            </div>
 
-                  <div class="review-actions">
-                    <button type="button" id="btn-confirm-search" class="btn-primary btn-submit">
-                      <svg class="icon animate-spin hidden" id="spinner-confirm" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="10" stroke="currentColor" stroke-width="3" stroke-opacity="0.25"/><path d="M4 12C4 7.58172 7.58172 4 12 4" stroke="currentColor" stroke-width="3" stroke-linecap="round"/></svg>
-                      <span id="btn-confirm-text">Confirm &amp; Start Search</span>
+            <!-- Results section -->
+            <section class="results-section">
+              <div class="section-header">
+                <div class="scraped-history-header-left">
+                  <input
+                    type="checkbox"
+                    id="select-all-history-checkbox"
+                    class="history-select-all-cb"
+                    title="Select All"
+                  />
+                  <h2>Scraped History</h2>
+                </div>
+                <div class="global-export-panel">
+                  <div class="global-export-actions">
+                    <!-- Filter button -->
+                    <button
+                      type="button"
+                      id="btn-relevancy-filter"
+                      class="btn-icon btn-filter"
+                      aria-label="Filter by relevancy"
+                      title="Filter by Relevancy"
+                    >
+                      <svg
+                        class="icon-sm"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        stroke-width="2"
+                        stroke-linecap="round"
+                        stroke-linejoin="round"
+                      >
+                        <polygon
+                          points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"
+                        />
+                      </svg>
+                    </button>
+                    <button
+                      type="button"
+                      id="btn-global-ai-audit"
+                      class="btn-secondary btn-ai-audit-global"
+                      title="Audit Selected Patents"
+                    >
+                      AI Audit
+                    </button>
+                    <button
+                      type="button"
+                      id="btn-global-deep-scrape"
+                      class="btn-secondary btn-deep-scrape-global"
+                      title="Deep Scrape Selected Patents"
+                    >
+                      Deep scrape
+                    </button>
+                    <button
+                      type="button"
+                      id="btn-global-export-csv"
+                      class="btn-secondary btn-export-global"
+                      title="Export Selected to CSV"
+                    >
+                      <svg
+                        class="icon-sm"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        stroke-width="2"
+                      >
+                        <path
+                          d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3"
+                        />
+                      </svg>
+                      CSV
+                    </button>
+                    <button
+                      type="button"
+                      id="btn-global-delete"
+                      class="btn-secondary btn-delete-global"
+                      title="Delete Selected Scraped Runs/Patents"
+                    >
+                      <svg
+                        class="icon-sm"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        stroke-width="2"
+                        stroke-linecap="round"
+                        stroke-linejoin="round"
+                      >
+                        <polyline points="3 6 5 6 21 6"></polyline>
+                        <path
+                          d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"
+                        ></path>
+                      </svg>
+                      Delete
                     </button>
                   </div>
                 </div>
               </div>
-            </div>
-          </section>
-
-          <!-- Live Progress Feed -->
-          <div id="live-feed" class="live-feed hidden">
-            <div class="live-feed-header">
-              <div class="live-feed-title">
-                <span class="pulse-dot"></span>
-                Live Pipeline Log
-              </div>
-              <div class="live-feed-header-right" style="display: flex; align-items: center; gap: 14px;">
-                <button type="button" id="btn-live-audit" class="btn-primary hidden" style="padding: 6px 14px; font-size: 0.8rem; border-radius: var(--radius-sm); border: none; font-weight: 700; height: 32px; background: var(--accent);">
-                  🤖 AI Audit Scraped
-                </button>
-                <div class="stage-pills" id="stage-pills">
-                  <span class="stage-pill" id="pill-planning">Planning</span>
-                  <span class="stage-pill" id="pill-scraping">Scraping</span>
-                  <button type="button" class="stage-pill" id="pill-auditing">Auditing</button>
-                  <span class="stage-pill" id="pill-saving">Saving</span>
-                  <span class="stage-pill" id="pill-complete">Done</span>
-                </div>
-                <button type="button" id="btn-terminate-scrape" class="btn-terminate hidden" title="Stop scrape after current keyword">
-                  <svg class="icon-sm" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/></svg>
-                  Stop
-                </button>
-              </div>
-            </div>
-            <div id="live-log" class="live-log-box">
-              <!-- SSE messages stream in here -->
-            </div>
-            <div id="audit-progress-bar-wrap" class="audit-progress-wrap hidden">
-              <div class="audit-progress-label">
-                <span id="audit-progress-text">Auditing...</span>
-                <span id="audit-progress-pct">0%</span>
-              </div>
-              <div class="audit-progress-track">
-                <div id="audit-progress-bar" class="audit-progress-fill" style="width:0%"></div>
-              </div>
-            </div>
+              <div id="history-container" class="history-container"></div>
+            </section>
           </div>
-
-          <!-- Novelty Audit Dashboard -->
-          <div id="novelty-results-panel" class="novelty-panel hidden">
-            <div class="novelty-panel-header" style="margin-bottom: 16px;">
-              <h3 style="font-size: 1.1rem; font-weight: 700;">Novelty &amp; Relevancy Audit Live-Dashboard</h3>
-              <span class="meta-text" style="font-size: 0.8rem; color: var(--text-secondary);">Real-time comparison of scraped patent abstracts against active keywords/description</span>
-            </div>
-            <div class="novelty-columns">
-              <div class="novelty-col novelty-col--red">
-                <div class="novelty-col-title-bar">
-                  <span class="status-marker bg-danger"></span>
-                  Low Novelty / Direct Match (Red)
-                </div>
-                <div id="novelty-list-red" class="novelty-list-container"></div>
-              </div>
-              <div class="novelty-col novelty-col--yellow">
-                <div class="novelty-col-title-bar">
-                  <span class="status-marker bg-warning"></span>
-                  Moderate Overlap (Yellow)
-                </div>
-                <div id="novelty-list-yellow" class="novelty-list-container"></div>
-              </div>
-              <div class="novelty-col novelty-col--green">
-                <div class="novelty-col-title-bar">
-                  <span class="status-marker bg-success"></span>
-                  High Novelty (Green Gap)
-                </div>
-                <div id="novelty-list-green" class="novelty-list-container"></div>
-              </div>
-            </div>
-          </div>
-
-          <!-- Results section -->
-          <section class="results-section">
-            <div class="section-header">
-              <div class="scraped-history-header-left">
-                <input type="checkbox" id="select-all-history-checkbox" class="history-select-all-cb" title="Select All">
-                <h2>Scraped History</h2>
-              </div>
-              <div class="global-export-panel">
-                <div class="global-export-actions">
-                  <!-- Filter button -->
-                  <button type="button" id="btn-relevancy-filter" class="btn-icon btn-filter" aria-label="Filter by relevancy" title="Filter by Relevancy">
-                    <svg class="icon-sm" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                      <polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/>
-                    </svg>
-                  </button>
-                  <button type="button" id="btn-global-export-csv" class="btn-secondary btn-export-global" title="Export Selected to CSV">
-                    <svg class="icon-sm" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3"/></svg>
-                    CSV
-                  </button>
-                  <button type="button" id="btn-global-export-pdf" class="btn-secondary btn-export-global" title="Export Selected to PDF">
-                    <svg class="icon-sm" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3"/></svg>
-                    PDF
-                  </button>
-                  <button type="button" id="btn-global-delete" class="btn-secondary btn-delete-global" title="Delete Selected Scraped Runs/Patents">
-                    <svg class="icon-sm" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                      <polyline points="3 6 5 6 21 6"></polyline>
-                      <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
-                    </svg>
-                    Delete
-                  </button>
-                </div>
-              </div>
-            </div>
-            <div id="history-container" class="history-container"></div>
-          </section>
-
-        </div><!-- /project-panel -->
-      </div><!-- /workspace-viewport -->
-    </main>
-  </div>
-
-  <!-- New Project Modal -->
-  <div id="modal-project" class="modal-overlay hidden">
-    <div class="modal">
-      <div class="modal-header">
-        <h3>Create New Project</h3>
-        <button id="btn-close-modal" class="btn-icon" aria-label="Close Modal">
-          <svg class="icon" viewBox="0 0 24 24" fill="none"><path d="M18 6L6 18M6 6L18 18" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
-        </button>
-      </div>
-      <form id="project-form">
-        <div class="form-group">
-          <label for="project-name-input">Project Name</label>
-          <input type="text" id="project-name-input" placeholder="e.g., IoT Agriculture Research" required autocomplete="off">
+          <!-- /project-panel -->
         </div>
-        <div class="modal-footer">
-          <button type="button" id="btn-cancel-project" class="btn-secondary">Cancel</button>
-          <button type="submit" class="btn-primary">Create Project</button>
-        </div>
-      </form>
+        <!-- /workspace-viewport -->
+      </main>
     </div>
-  </div>
 
-  <!-- Settings Modal -->
-  <div id="modal-settings" class="modal-overlay hidden">
-    <div class="modal modal-settings">
-      <div class="modal-header">
-        <h3>Pipeline Settings</h3>
-        <button id="btn-close-settings" class="btn-icon" aria-label="Close Settings">
-          <svg class="icon" viewBox="0 0 24 24" fill="none"><path d="M18 6L6 18M6 6L18 18" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
-        </button>
-      </div>
-      <div class="settings-body">
-        <div class="settings-group">
-          <div class="settings-label">
-            <span>Patent Search Sources</span>
-            <span class="meta-text">Choose which patent databases the scraper should search</span>
-          </div>
-          <div class="settings-option-cards">
-            <label class="option-card">
-              <input type="checkbox" name="search-source" value="google" checked>
-              <div class="option-card-body">
-                <div class="option-card-title">Google Patents</div>
-                <div class="option-card-desc">Searches Google Patents with the existing scraper.</div>
-              </div>
-            </label>
-            <label class="option-card">
-              <input type="checkbox" name="search-source" value="india">
-              <div class="option-card-body">
-                <div class="option-card-title">Indian Patents</div>
-                <div class="option-card-desc">Searches the IP India public patent search portal and saves application number, title, and abstract.</div>
-              </div>
-            </label>
-          </div>
+    <!-- New Project Modal -->
+    <div id="modal-project" class="modal-overlay hidden">
+      <div class="modal">
+        <div class="modal-header">
+          <h3>Create New Project</h3>
+          <button
+            id="btn-close-modal"
+            class="btn-icon"
+            aria-label="Close Modal"
+          >
+            <svg class="icon" viewBox="0 0 24 24" fill="none">
+              <path
+                d="M18 6L6 18M6 6L18 18"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              />
+            </svg>
+          </button>
         </div>
-        <div class="settings-group">
-          <div class="settings-label">
-            <span>AI Relevance Audit Mode</span>
-            <span class="meta-text">Controls how patents are audited by Gemini</span>
-          </div>
-          <div class="settings-option-cards">
-            <label class="option-card" id="opt-sequential">
-              <input type="radio" name="audit-mode" value="sequential" checked>
-              <div class="option-card-body">
-                <div class="option-card-title">Sequential</div>
-                <div class="option-card-desc">Audits one patent at a time. Safer, avoids rate limits, slightly slower.</div>
-              </div>
-            </label>
-            <label class="option-card" id="opt-parallel">
-              <input type="radio" name="audit-mode" value="parallel">
-              <div class="option-card-body">
-                <div class="option-card-title">⚡ Parallel</div>
-                <div class="option-card-desc">Audits all patents simultaneously. Much faster but may hit Gemini rate limits on large sets.</div>
-              </div>
-            </label>
-          </div>
-        </div>
-        <div class="settings-group">
-          <div class="settings-label">
-            <span>CAPTCHA Mode</span>
-            <span class="meta-text">How the scraper handles Indian Patent CAPTCHAs</span>
-          </div>
-          <div class="captcha-mode-toggle">
-            <button type="button" id="btn-captcha-mode-auto" class="captcha-mode-btn active" data-mode="auto">Auto Solve</button>
-            <button type="button" id="btn-captcha-mode-manual" class="captcha-mode-btn" data-mode="manual">Manual Only</button>
-          </div>
-          <div id="captcha-service-section" class="settings-option-cards" style="margin-top: 10px;">
-            <label class="option-card" id="opt-captcha-2captcha">
-              <input type="radio" name="captcha-service" value="2captcha" checked>
-              <div class="option-card-body">
-                <div class="option-card-title">2Captcha</div>
-                <div class="option-card-desc">Paid automated CAPTCHA solving via 2Captcha API. Retries up to 5 times automatically.</div>
-              </div>
-            </label>
-          </div>
-        </div>
-      </div>
-    </div>
-  </div>
-
-  <!-- Saved Keywords Modal -->
-  <div id="modal-saved-keywords" class="modal-overlay hidden">
-    <div class="modal modal-keywords">
-      <div class="modal-header">
-        <h3>Saved Search Strategies</h3>
-        <button id="btn-close-keywords" class="btn-icon" aria-label="Close">
-          <svg class="icon" viewBox="0 0 24 24" fill="none"><path d="M18 6L6 18M6 6L18 18" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
-        </button>
-      </div>
-      <div id="saved-keywords-list" class="saved-keywords-body">
-        <p class="meta-text">No saved searches for this project yet.</p>
-      </div>
-    </div>
-  </div>
-
-  <!-- Relevancy Filter Modal -->
-  <div id="modal-filter" class="modal-overlay hidden">
-    <div class="modal modal-filter">
-      <div class="modal-header">
-        <h3>
-          <svg class="icon-sm" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/></svg>
-          Filter by Relevancy
-        </h3>
-        <button id="btn-close-filter" class="btn-icon" aria-label="Close Filter">
-          <svg class="icon" viewBox="0 0 24 24" fill="none"><path d="M18 6L6 18M6 6L18 18" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
-        </button>
-      </div>
-      <div class="filter-body">
-        <p class="filter-description">Select which relevancy categories to include in the export. Only patents matching your selection will be downloaded.</p>
-        <div class="filter-options">
-          <label class="filter-option filter-option--red">
-            <input type="checkbox" name="filter-relevancy" value="Red" id="filter-red">
-            <span class="filter-dot filter-dot--red"></span>
-            <div class="filter-option-text">
-              <strong>Closely Relevant</strong>
-              <span>Covers most or all of the core inventive concept</span>
-            </div>
-          </label>
-          <label class="filter-option filter-option--yellow">
-            <input type="checkbox" name="filter-relevancy" value="Yellow" id="filter-yellow">
-            <span class="filter-dot filter-dot--yellow"></span>
-            <div class="filter-option-text">
-              <strong>Mildly Relevant</strong>
-              <span>Discloses some elements or overlapping subsystems</span>
-            </div>
-          </label>
-          <label class="filter-option filter-option--green">
-            <input type="checkbox" name="filter-relevancy" value="Green" id="filter-green">
-            <span class="filter-dot filter-dot--green"></span>
-            <div class="filter-option-text">
-              <strong>Not Relevant</strong>
-              <span>Unrelated or only superficial keyword overlap</span>
-            </div>
-          </label>
-        </div>
-        <div class="filter-actions">
-          <button type="button" id="btn-filter-reset" class="btn-secondary">Reset Filter</button>
-          <button type="button" id="btn-filter-apply" class="btn-primary">Apply Filter</button>
-        </div>
-      </div>
-    </div>
-  </div>
-
-  <!-- Filter Mismatch Alert Dialog -->
-  <div id="modal-alert" class="modal-overlay hidden">
-    <div class="modal modal-alert">
-      <div class="modal-header">
-        <h3>
-          <svg class="icon-sm alert-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
-          Outside Active Filter
-        </h3>
-      </div>
-      <div class="alert-body">
-        <p id="alert-message">This patent does not match your active relevancy filter. Please adjust your filter or deselect this item.</p>
-      </div>
-      <div class="alert-footer">
-        <button type="button" id="btn-alert-ok" class="btn-primary">Got it</button>
-      </div>
-    </div>
-  </div>
-  <!-- Delete Confirmation Modal -->
-  <div id="modal-delete-confirm" class="modal-overlay hidden">
-    <div class="modal modal-alert">
-      <div class="modal-header">
-        <h3 style="color: var(--danger); display: flex; align-items: center; gap: 8px;">
-          <svg class="icon-sm" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <polyline points="3 6 5 6 21 6"></polyline>
-            <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
-          </svg>
-          Confirm Deletion
-        </h3>
-      </div>
-      <div class="alert-body">
-        <p>Do you want to delete the following selected items?</p>
-        <div id="delete-selected-list" style="margin-top: 12px; max-height: 150px; overflow-y: auto; border: 1px solid var(--border-color); padding: 8px; border-radius: var(--radius-md); background: var(--bg-primary); text-align: left; font-size: var(--font-sm); display: flex; flex-direction: column; gap: 6px;">
-          <!-- Dynamic list of items to delete -->
-        </div>
-      </div>
-      <div class="alert-footer" style="display: flex; justify-content: flex-end; gap: 8px; margin-top: 15px;">
-        <button type="button" id="btn-delete-cancel" class="btn-secondary">Cancel</button>
-        <button type="button" id="btn-delete-confirm-action" class="btn-primary" style="background-color: var(--danger); border-color: var(--danger);">Delete</button>
-      </div>
-    </div>
-  </div>
-
-  <!-- India Patents Options Modal -->
-  <div id="modal-india-options" class="modal-overlay hidden">
-    <div class="modal modal-india-options">
-      <div class="modal-header">
-        <h3>🇮🇳 Indian Patents Advanced Options</h3>
-        <button id="btn-close-india-options" class="btn-icon" aria-label="Close Options">
-          <svg class="icon" viewBox="0 0 24 24" fill="none"><path d="M18 6L6 18M6 6L18 18" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
-        </button>
-      </div>
-      <div class="india-options-body">
-        <form id="india-options-form">
-          <!-- Publication Type -->
-          <div class="form-group-inline">
-            <span class="field-label">Publication Type:</span>
-            <label class="checkbox-label">
-              <input type="radio" name="india-opt-pubtype" id="india-opt-published" value="published" checked> Published
-            </label>
-            <label class="checkbox-label">
-              <input type="radio" name="india-opt-pubtype" id="india-opt-granted" value="granted"> Granted
-            </label>
-          </div>
-
-          <!-- Date field & logic -->
-          <div class="form-grid-2">
-            <div class="form-group">
-              <label for="india-opt-date-field">Date Search Field</label>
-              <select id="india-opt-date-field">
-                <option value="APD">Application Date (National)</option>
-                <option value="PD">Publication Date</option>
-                <option value="PDG">Date of Grant</option>
-                <option value="PRD">Priority Date</option>
-              </select>
-            </div>
-            <div class="form-group">
-              <label for="india-opt-logic-field">Main Logical Operator</label>
-              <select id="india-opt-logic-field">
-                <option value="AND">AND</option>
-                <option value="OR">OR</option>
-                <option value="NOT">NOT</option>
-              </select>
-            </div>
-          </div>
-
-          <!-- Date range -->
-          <div class="form-grid-2">
-            <div class="form-group">
-              <label for="india-opt-from-date">From Date</label>
-              <input type="text" id="india-opt-from-date" placeholder="mm/dd/yyyy">
-            </div>
-            <div class="form-group">
-              <label for="india-opt-to-date">To Date</label>
-              <input type="text" id="india-opt-to-date" placeholder="mm/dd/yyyy">
-            </div>
-          </div>
-
-          <div class="modal-footer">
-            <button type="button" id="btn-india-cancel" class="btn-secondary">Cancel</button>
-            <button type="submit" class="btn-primary">Save Options</button>
-          </div>
-        </form>
-      </div>
-    </div>
-  </div>
-
-  <!-- CAPTCHA Modal -->
-  <div id="modal-captcha" class="modal-overlay hidden">
-    <div class="modal modal-captcha">
-      <div class="modal-header">
-        <h3>🇮🇳 Indian Patent Search CAPTCHA</h3>
-      </div>
-      <div class="captcha-body">
-        <p class="captcha-description">Enter the validation code shown below to proceed with the Indian patent search.</p>
-        <div class="captcha-image-wrapper">
-          <img id="captcha-img" src="" alt="CAPTCHA Challenge">
-        </div>
-        <form id="captcha-form">
+        <form id="project-form">
           <div class="form-group">
-            <input type="text" id="captcha-input" placeholder="Enter CAPTCHA text" required autocomplete="off" autofocus>
+            <label for="project-name-input">Project Name</label>
+            <input
+              type="text"
+              id="project-name-input"
+              placeholder="e.g., IoT Agriculture Research"
+              required
+              autocomplete="off"
+            />
           </div>
           <div class="modal-footer">
-            <button type="submit" id="btn-captcha-submit" class="btn-primary">Verify CAPTCHA</button>
+            <button type="button" id="btn-cancel-project" class="btn-secondary">
+              Cancel
+            </button>
+            <button type="submit" class="btn-primary">Create Project</button>
           </div>
         </form>
       </div>
     </div>
-  </div>
 
-  <script src="app.js"></script>
-</body>
+    <!-- Settings Modal -->
+    <div id="modal-settings" class="modal-overlay hidden">
+      <div class="modal modal-settings">
+        <div class="modal-header">
+          <h3>Pipeline Settings</h3>
+          <button
+            id="btn-close-settings"
+            class="btn-icon"
+            aria-label="Close Settings"
+          >
+            <svg class="icon" viewBox="0 0 24 24" fill="none">
+              <path
+                d="M18 6L6 18M6 6L18 18"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              />
+            </svg>
+          </button>
+        </div>
+        <div class="settings-body">
+          <div class="settings-group">
+            <div class="settings-label">
+              <span>Patent Search Sources</span>
+              <span class="meta-text"
+                >Choose which patent databases the scraper should search</span
+              >
+            </div>
+            <div class="settings-option-cards">
+              <label class="option-card">
+                <input
+                  type="checkbox"
+                  name="search-source"
+                  value="google"
+                  checked
+                />
+                <div class="option-card-body">
+                  <div class="option-card-title">Google Patents</div>
+                  <div class="option-card-desc">
+                    Searches Google Patents with the existing scraper.
+                  </div>
+                </div>
+              </label>
+              <label class="option-card">
+                <input type="checkbox" name="search-source" value="india" />
+                <div class="option-card-body">
+                  <div class="option-card-title">Indian Patents</div>
+                  <div class="option-card-desc">
+                    Searches the IP India public patent search portal and saves
+                    application number, title, and abstract.
+                  </div>
+                </div>
+              </label>
+            </div>
+          </div>
+          <div class="settings-group">
+            <div class="settings-label">
+              <span>AI Relevance Audit Mode</span>
+              <span class="meta-text"
+                >Controls how patents are audited by Gemini</span
+              >
+            </div>
+            <div class="settings-option-cards">
+              <label class="option-card" id="opt-sequential">
+                <input
+                  type="radio"
+                  name="audit-mode"
+                  value="sequential"
+                  checked
+                />
+                <div class="option-card-body">
+                  <div class="option-card-title">Sequential</div>
+                  <div class="option-card-desc">
+                    Audits one patent at a time. Safer, avoids rate limits,
+                    slightly slower.
+                  </div>
+                </div>
+              </label>
+              <label class="option-card" id="opt-parallel">
+                <input type="radio" name="audit-mode" value="parallel" />
+                <div class="option-card-body">
+                  <div class="option-card-title">⚡ Parallel</div>
+                  <div class="option-card-desc">
+                    Audits all patents simultaneously. Much faster but may hit
+                    Gemini rate limits on large sets.
+                  </div>
+                </div>
+              </label>
+            </div>
+          </div>
+          <div class="settings-group">
+            <div class="settings-label">
+              <span>CAPTCHA Mode</span>
+              <span class="meta-text"
+                >How the scraper handles Indian Patent CAPTCHAs</span
+              >
+            </div>
+            <div class="captcha-mode-toggle">
+              <button
+                type="button"
+                id="btn-captcha-mode-auto"
+                class="captcha-mode-btn active"
+                data-mode="auto"
+              >
+                Auto Solve
+              </button>
+              <button
+                type="button"
+                id="btn-captcha-mode-manual"
+                class="captcha-mode-btn"
+                data-mode="manual"
+              >
+                Manual Only
+              </button>
+            </div>
+            <div
+              id="captcha-service-section"
+              class="settings-option-cards"
+              style="margin-top: 10px"
+            >
+              <label class="option-card" id="opt-captcha-2captcha">
+                <input
+                  type="radio"
+                  name="captcha-service"
+                  value="2captcha"
+                  checked
+                />
+                <div class="option-card-body">
+                  <div class="option-card-title">2Captcha</div>
+                  <div class="option-card-desc">
+                    Paid automated CAPTCHA solving via 2Captcha API. Retries up
+                    to 5 times automatically.
+                  </div>
+                </div>
+              </label>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Saved Keywords Modal -->
+    <div id="modal-saved-keywords" class="modal-overlay hidden">
+      <div class="modal modal-keywords">
+        <div class="modal-header">
+          <h3>Saved Search Strategies</h3>
+          <button id="btn-close-keywords" class="btn-icon" aria-label="Close">
+            <svg class="icon" viewBox="0 0 24 24" fill="none">
+              <path
+                d="M18 6L6 18M6 6L18 18"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              />
+            </svg>
+          </button>
+        </div>
+        <div id="saved-keywords-list" class="saved-keywords-body">
+          <p class="meta-text">No saved searches for this project yet.</p>
+        </div>
+      </div>
+    </div>
+
+    <!-- Relevancy Filter Modal -->
+    <div id="modal-filter" class="modal-overlay hidden">
+      <div class="modal modal-filter">
+        <div class="modal-header">
+          <h3>
+            <svg
+              class="icon-sm"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            >
+              <polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3" />
+            </svg>
+            Filter by Relevancy
+          </h3>
+          <button
+            id="btn-close-filter"
+            class="btn-icon"
+            aria-label="Close Filter"
+          >
+            <svg class="icon" viewBox="0 0 24 24" fill="none">
+              <path
+                d="M18 6L6 18M6 6L18 18"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              />
+            </svg>
+          </button>
+        </div>
+        <div class="filter-body">
+          <p class="filter-description">
+            Select which relevancy categories to include in the export. Only
+            patents matching your selection will be downloaded.
+          </p>
+          <div class="filter-options">
+            <label class="filter-option filter-option--red">
+              <input
+                type="checkbox"
+                name="filter-relevancy"
+                value="Red"
+                id="filter-red"
+              />
+              <span class="filter-dot filter-dot--red"></span>
+              <div class="filter-option-text">
+                <strong>Closely Relevant</strong>
+                <span>Covers most or all of the core inventive concept</span>
+              </div>
+            </label>
+            <label class="filter-option filter-option--yellow">
+              <input
+                type="checkbox"
+                name="filter-relevancy"
+                value="Yellow"
+                id="filter-yellow"
+              />
+              <span class="filter-dot filter-dot--yellow"></span>
+              <div class="filter-option-text">
+                <strong>Mildly Relevant</strong>
+                <span>Discloses some elements or overlapping subsystems</span>
+              </div>
+            </label>
+            <label class="filter-option filter-option--green">
+              <input
+                type="checkbox"
+                name="filter-relevancy"
+                value="Green"
+                id="filter-green"
+              />
+              <span class="filter-dot filter-dot--green"></span>
+              <div class="filter-option-text">
+                <strong>Not Relevant</strong>
+                <span>Unrelated or only superficial keyword overlap</span>
+              </div>
+            </label>
+          </div>
+          <div class="filter-actions">
+            <button type="button" id="btn-filter-reset" class="btn-secondary">
+              Reset Filter
+            </button>
+            <button type="button" id="btn-filter-apply" class="btn-primary">
+              Apply Filter
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Filter Mismatch Alert Dialog -->
+    <div id="modal-alert" class="modal-overlay hidden">
+      <div class="modal modal-alert">
+        <div class="modal-header">
+          <h3>
+            <svg
+              class="icon-sm alert-icon"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+            >
+              <circle cx="12" cy="12" r="10" />
+              <line x1="12" y1="8" x2="12" y2="12" />
+              <line x1="12" y1="16" x2="12.01" y2="16" />
+            </svg>
+            Outside Active Filter
+          </h3>
+        </div>
+        <div class="alert-body">
+          <p id="alert-message">
+            This patent does not match your active relevancy filter. Please
+            adjust your filter or deselect this item.
+          </p>
+        </div>
+        <div class="alert-footer">
+          <button type="button" id="btn-alert-ok" class="btn-primary">
+            Got it
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Patent Details Modal -->
+    <div id="modal-patent-details" class="modal-overlay hidden">
+      <div class="modal modal-patent-details">
+        <div class="modal-header">
+          <h3 id="patent-details-title">Patent Details</h3>
+          <button
+            id="btn-close-patent-details"
+            class="btn-icon"
+            aria-label="Close Patent Details"
+          >
+            <svg class="icon" viewBox="0 0 24 24" fill="none">
+              <path
+                d="M18 6L6 18M6 6L18 18"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              />
+            </svg>
+          </button>
+        </div>
+        <div id="patent-details-body" class="patent-details-body"></div>
+      </div>
+    </div>
+
+    <!-- Delete Confirmation Modal -->
+    <div id="modal-delete-confirm" class="modal-overlay hidden">
+      <div class="modal modal-alert">
+        <div class="modal-header">
+          <h3
+            style="
+              color: var(--danger);
+              display: flex;
+              align-items: center;
+              gap: 8px;
+            "
+          >
+            <svg
+              class="icon-sm"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            >
+              <polyline points="3 6 5 6 21 6"></polyline>
+              <path
+                d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"
+              ></path>
+            </svg>
+            Confirm Deletion
+          </h3>
+        </div>
+        <div class="alert-body">
+          <p>Do you want to delete the following selected items?</p>
+          <div
+            id="delete-selected-list"
+            style="
+              margin-top: 12px;
+              max-height: 150px;
+              overflow-y: auto;
+              border: 1px solid var(--border-color);
+              padding: 8px;
+              border-radius: var(--radius-md);
+              background: var(--bg-primary);
+              text-align: left;
+              font-size: var(--font-sm);
+              display: flex;
+              flex-direction: column;
+              gap: 6px;
+            "
+          >
+            <!-- Dynamic list of items to delete -->
+          </div>
+        </div>
+        <div
+          class="alert-footer"
+          style="
+            display: flex;
+            justify-content: flex-end;
+            gap: 8px;
+            margin-top: 15px;
+          "
+        >
+          <button type="button" id="btn-delete-cancel" class="btn-secondary">
+            Cancel
+          </button>
+          <button
+            type="button"
+            id="btn-delete-confirm-action"
+            class="btn-primary"
+            style="background-color: var(--danger); border-color: var(--danger)"
+          >
+            Delete
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- India Patents Options Modal -->
+    <div id="modal-india-options" class="modal-overlay hidden">
+      <div class="modal modal-india-options">
+        <div class="modal-header">
+          <h3>🇮🇳 Indian Patents Advanced Options</h3>
+          <button
+            id="btn-close-india-options"
+            class="btn-icon"
+            aria-label="Close Options"
+          >
+            <svg class="icon" viewBox="0 0 24 24" fill="none">
+              <path
+                d="M18 6L6 18M6 6L18 18"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              />
+            </svg>
+          </button>
+        </div>
+        <div class="india-options-body">
+          <form id="india-options-form">
+            <!-- Publication Type -->
+            <div class="form-group-inline">
+              <span class="field-label">Publication Type:</span>
+              <label class="checkbox-label">
+                <input
+                  type="radio"
+                  name="india-opt-pubtype"
+                  id="india-opt-published"
+                  value="published"
+                  checked
+                />
+                Published
+              </label>
+              <label class="checkbox-label">
+                <input
+                  type="radio"
+                  name="india-opt-pubtype"
+                  id="india-opt-granted"
+                  value="granted"
+                />
+                Granted
+              </label>
+            </div>
+
+            <!-- Date field & logic -->
+            <div class="form-grid-2">
+              <div class="form-group">
+                <label for="india-opt-date-field">Date Search Field</label>
+                <select id="india-opt-date-field">
+                  <option value="APD">Application Date (National)</option>
+                  <option value="PD">Publication Date</option>
+                  <option value="PDG">Date of Grant</option>
+                  <option value="PRD">Priority Date</option>
+                </select>
+              </div>
+              <div class="form-group">
+                <label for="india-opt-logic-field">Main Logical Operator</label>
+                <select id="india-opt-logic-field">
+                  <option value="AND">AND</option>
+                  <option value="OR">OR</option>
+                  <option value="NOT">NOT</option>
+                </select>
+              </div>
+            </div>
+
+            <!-- Date range -->
+            <div class="form-grid-2">
+              <div class="form-group">
+                <label for="india-opt-from-date">From Date</label>
+                <input
+                  type="text"
+                  id="india-opt-from-date"
+                  placeholder="mm/dd/yyyy"
+                />
+              </div>
+              <div class="form-group">
+                <label for="india-opt-to-date">To Date</label>
+                <input
+                  type="text"
+                  id="india-opt-to-date"
+                  placeholder="mm/dd/yyyy"
+                />
+              </div>
+            </div>
+
+            <div class="modal-footer">
+              <button type="button" id="btn-india-cancel" class="btn-secondary">
+                Cancel
+              </button>
+              <button type="submit" class="btn-primary">Save Options</button>
+            </div>
+          </form>
+        </div>
+      </div>
+    </div>
+
+    <!-- CAPTCHA Modal -->
+    <div id="modal-captcha" class="modal-overlay hidden">
+      <div class="modal modal-captcha">
+        <div class="modal-header">
+          <h3>🇮🇳 Indian Patent Search CAPTCHA</h3>
+        </div>
+        <div class="captcha-body">
+          <p class="captcha-description">
+            Enter the validation code shown below to proceed with the Indian
+            patent search.
+          </p>
+          <div class="captcha-image-wrapper">
+            <img id="captcha-img" src="" alt="CAPTCHA Challenge" />
+          </div>
+          <form id="captcha-form">
+            <div class="form-group">
+              <input
+                type="text"
+                id="captcha-input"
+                placeholder="Enter CAPTCHA text"
+                required
+                autocomplete="off"
+                autofocus
+              />
+            </div>
+            <div class="modal-footer">
+              <button type="submit" id="btn-captcha-submit" class="btn-primary">
+                Verify CAPTCHA
+              </button>
+            </div>
+          </form>
+        </div>
+      </div>
+    </div>
+
+    <script src="app.js"></script>
+  </body>
 </html>

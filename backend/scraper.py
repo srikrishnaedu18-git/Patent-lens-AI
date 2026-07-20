@@ -6,7 +6,6 @@ the top-20 results (title + abstract) for a given keyword query.
 
 Outputs:
   • patents_results.csv  — standard CSV file
-  • patents_results.pdf  — CSV-style table rendered as a PDF
 
 Usage:
   python scraper.py --query "smart irrigation sensor IoT"
@@ -20,11 +19,10 @@ import logging
 import os
 import base64
 import sys
-import textwrap
 import time
 from pathlib import Path
-from datetime import datetime
 from typing import Awaitable, Callable, Optional
+from urllib.parse import urlparse
 
 from playwright.async_api import async_playwright, TimeoutError as PlaywrightTimeoutError
 from dotenv import load_dotenv
@@ -33,14 +31,122 @@ load_dotenv(override=True)
 
 logger = logging.getLogger("scraper")
 
-# ── optional PDF library (fpdf2) ──────────────────────────────────────────────
-try:
-    from fpdf import FPDF
-    PDF_AVAILABLE = True
-except ImportError:
-    PDF_AVAILABLE = False
-    print("[WARN] fpdf2 not installed — PDF output will be skipped.")
-    print("       Run: pip install fpdf2")
+
+def _strip_html_to_text(content: str) -> str:
+    import html as html_module
+    import re
+
+    content = re.sub(
+        r'<span[^>]*class="google-src-text"[^>]*>.*?</span>',
+        " ",
+        content,
+        flags=re.DOTALL | re.IGNORECASE,
+    )
+    content = re.sub(r"<(br|/p|/div|/h[1-6]|/li)\b[^>]*>", "\n", content, flags=re.IGNORECASE)
+    text = re.sub(r"<[^>]+>", " ", content)
+    text = html_module.unescape(text)
+    lines = [re.sub(r"\s+", " ", line).strip() for line in text.splitlines()]
+    return "\n".join(line for line in lines if line)
+
+
+def fetch_patent_deep_scrape(url: str, patent_id: str = "") -> str:
+    """Fetch a patent detail page and extract title, abstract, description, and claims.
+
+    The extractor intentionally stops before Google Patents citation/footer sections
+    and removes table-like blocks so exports/audits do not ingest citation tables.
+    """
+    import re
+    import urllib.request
+
+    if not url:
+        raise ValueError("Patent URL is empty")
+
+    parsed = urlparse(url)
+    if not parsed.scheme:
+        url = "https://patents.google.com" + (url if url.startswith("/") else f"/patent/{patent_id}/en")
+
+    headers = {
+        "User-Agent": (
+            "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
+            "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+        ),
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Accept-Language": "en-US,en;q=0.9",
+    }
+    req = urllib.request.Request(url, headers=headers)
+    with urllib.request.urlopen(req, timeout=30) as response:
+        page_content = response.read().decode("utf-8", errors="ignore")
+
+    cutoff_patterns = [
+        r'<div[^>]*class=["\'][^"\']*\bfooter\b[^"\']*["\'][^>]*>',
+        r'<h3[^>]*id=["\']patentCitations["\'][^>]*>',
+        r'<h3[^>]*id=["\']citedBy["\'][^>]*>',
+    ]
+    cutoff_indexes = [
+        m.start()
+        for pattern in cutoff_patterns
+        for m in [re.search(pattern, page_content, re.IGNORECASE)]
+        if m
+    ]
+    if cutoff_indexes:
+        page_content = page_content[: min(cutoff_indexes)]
+
+    page_content = re.sub(r"<script\b.*?</script>", " ", page_content, flags=re.DOTALL | re.IGNORECASE)
+    page_content = re.sub(r"<style\b.*?</style>", " ", page_content, flags=re.DOTALL | re.IGNORECASE)
+    page_content = re.sub(r"<table\b.*?</table>", " ", page_content, flags=re.DOTALL | re.IGNORECASE)
+    page_content = re.sub(
+        r'<div[^>]*class=["\'][^"\']*(responsive-table|table)[^"\']*["\'][^>]*>.*?</div>',
+        " ",
+        page_content,
+        flags=re.DOTALL | re.IGNORECASE,
+    )
+
+    def meta_value(name: str) -> str:
+        m = re.search(
+            rf'<meta[^>]*name=["\']{re.escape(name)}["\'][^>]*content=["\']([^"\']*)',
+            page_content,
+            re.IGNORECASE,
+        )
+        return _strip_html_to_text(m.group(1)) if m else ""
+
+    title = meta_value("DC.title")
+    if not title:
+        m = re.search(r'<span[^>]*itemprop=["\']title["\'][^>]*>(.*?)</span>', page_content, re.DOTALL | re.IGNORECASE)
+        title = _strip_html_to_text(m.group(1)) if m else patent_id
+
+    sections: list[tuple[str, str]] = []
+    if title:
+        sections.append(("Title", title))
+
+    section_labels = {
+        "abstract": "Abstract",
+        "description": "Description",
+        "claims": "Claims",
+    }
+    for itemprop, label in section_labels.items():
+        m = re.search(
+            rf'<section[^>]*itemprop=["\']{itemprop}["\'][^>]*>(.*?)</section>',
+            page_content,
+            re.DOTALL | re.IGNORECASE,
+        )
+        if not m:
+            continue
+        section_html = re.sub(r"<h2\b.*?</h2>", " ", m.group(1), flags=re.DOTALL | re.IGNORECASE)
+        text = _strip_html_to_text(section_html)
+        if text:
+            sections.append((label, text))
+
+    if len(sections) <= 1:
+        article = re.search(r"<article\b[^>]*>(.*?)</article>", page_content, re.DOTALL | re.IGNORECASE)
+        if article:
+            text = _strip_html_to_text(article.group(1))
+            if text:
+                sections.append(("Patent Body", text))
+
+    if not sections:
+        raise RuntimeError("No deep scrape content found")
+
+    return "\n\n".join(f"{label}\n{text}" for label, text in sections).strip()
 
 # ─────────────────────────────────────────────────────────────────────────────
 #  Core scraping logic
@@ -49,6 +155,7 @@ except ImportError:
 GOOGLE_PATENTS_SEARCH = "https://patents.google.com/?q={query}&num=20"
 INDIA_PATENTS_BASE = "https://iprsearch.ipindia.gov.in"
 VALID_PATENT_SOURCES = {"google", "india"}
+INDIA_CAPTCHA_MAX_ATTEMPTS = 2
 
 INDIA_SEARCH_FIELDS = {
     "TI", "ABS", "CSP", "AP", "PN", "patent-number", "PA", "ANC", "ANA",
@@ -210,45 +317,171 @@ async def scrape_patents(
     if not all_results and errors:
         raise RuntimeError("; ".join(errors))
 
-    seen: set[str] = set()
-    unique: list[dict] = []
-    for result in all_results:
-        key = f"{result.get('source', '')}:{result.get('patent_id') or result.get('title', '')}"
-        if key in seen:
-            continue
-        seen.add(key)
-        result["rank"] = len(unique) + 1
-        unique.append(result)
-
-    return unique[: max(1, max_results * len(selected_sources))]
+    return all_results
 
 
-def _fetch_google_patent_details(patent_id: str) -> tuple[Optional[str], Optional[str]]:
-    """Fetch the full title and abstract for a patent from Google Patents using urllib."""
+def _fetch_google_patent_details_jsonld(patent_id: str) -> tuple[Optional[str], Optional[str]]:
+    """
+    Fetch the full title and abstract for a Google Patents page from raw HTML.
+
+    Discovery (from probing actual patent page HTML):
+    ─────────────────────────────────────────────────
+    • US patents: contain <section itemprop="abstract"> in the raw HTML with
+      the full abstract text in <p> / <div itemprop="content"> elements.
+    • JP/other translated patents: the abstract section is only created by JS,
+      but the raw HTML contains <summary-of-invention> inside <description>.
+    • DC.description meta tag: available for US patents as a clean, untruncated
+      summary; empty for JP patents.
+    • JSON-LD: not present in Google Patents pages.
+
+    Strategy (in order):
+      1. <section itemprop="abstract"> in raw HTML  → US patents ✓
+      2. DC.description meta tag                     → US patents ✓ (shorter abstracts)
+      3. <summary-of-invention> in description       → JP/translated patents ✓
+      4. DC.title for the title in all cases
+    """
     import urllib.request
-    import html
+    import html as html_module
     import re
-    
-    url = f"https://patents.google.com/patent/{patent_id}/en"
+
+    from urllib.parse import urljoin
+
+    base_url = "https://patents.google.com"
     headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+        "User-Agent": (
+            "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
+            "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+        ),
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Accept-Language": "en-US,en;q=0.9",
     }
-    req = urllib.request.Request(url, headers=headers)
+
+    def _strip_html(content: str) -> str:
+        """Strip HTML tags and collapse whitespace to plain text."""
+        # Remove <span class="google-src-text"> blocks (untranslated source language)
+        content = re.sub(
+            r'<span[^>]*class="google-src-text"[^>]*>.*?</span>',
+            '', content, flags=re.DOTALL
+        )
+        text = re.sub(r'<[^>]+>', ' ', content)
+        return re.sub(r'\s+', ' ', html_module.unescape(text)).strip()
+
+    def _extract_details_from_html(page_content: str) -> tuple[Optional[str], Optional[str], list[str]]:
+        title: Optional[str] = None
+        abstract: Optional[str] = None
+        related_urls: list[str] = []
+
+        # ── 1. DC.title ──────────────────────────────────────────────────────
+        m = re.search(
+            r'<meta[^>]*name="DC\.title"[^>]*content="([^"]*)"',
+            page_content, re.IGNORECASE,
+        )
+        if m:
+            title = html_module.unescape(m.group(1)).strip() or None
+
+        # ── 2. section itemprop="abstract" from the patent detail page ───────
+        abs_sec = re.search(
+            r'<section[^>]*itemprop=["\']abstract["\'][^>]*>(.*?)</section>',
+            page_content, re.DOTALL | re.IGNORECASE,
+        )
+        if abs_sec:
+            section_html = re.sub(
+                r'<h2[^>]*>.*?</h2>',
+                ' ',
+                abs_sec.group(1),
+                flags=re.DOTALL | re.IGNORECASE,
+            )
+            text = _strip_html(section_html)
+            if text and len(text) > 30:
+                abstract = text
+
+        # ── 3. DC.description meta (clean for US patents) ────────────────────
+        if not abstract:
+            m = re.search(
+                r'<meta[^>]*name="DC\.description"[^>]*content="([^"]*)"',
+                page_content, re.IGNORECASE,
+            )
+            if m:
+                val = html_module.unescape(m.group(1)).strip()
+                if val and len(val) > 30 and not val.endswith("…"):
+                    abstract = val
+
+        # ── 4. <abstract> tag nested inside Google's detail HTML ─────────────
+        if not abstract:
+            abs_tag = re.search(
+                r'<abstract\b[^>]*>(.*?)</abstract>',
+                page_content, re.DOTALL | re.IGNORECASE,
+            )
+            if abs_tag:
+                text = _strip_html(abs_tag.group(1))
+                if text and len(text) > 30:
+                    abstract = text
+
+        # ── 5. <summary-of-invention> (JP/translated patents) ────────────────
+        if not abstract:
+            sum_sec = re.search(
+                r'<summary-of-invention>(.*?)</summary-of-invention>',
+                page_content, re.DOTALL | re.IGNORECASE,
+            )
+            if sum_sec:
+                text = _strip_html(sum_sec.group(1))
+                # Keep only English sentences (exclude CJK-heavy lines)
+                lines = text.split('.')
+                english_lines = [
+                    l.strip() for l in lines
+                    if l.strip() and not re.search(r'[\u3000-\u9fff]', l)
+                ]
+                combined = '. '.join(english_lines).strip()
+                if combined and len(combined) > 30:
+                    abstract = combined[:3000]  # cap at 3000 chars
+
+        # Granted patent pages can omit abstracts. Google usually links the
+        # published A document under "Other versions", which does contain one.
+        for href in re.findall(r'<a[^>]+href=["\']([^"\']*/patent/[^"\']+/en)["\']', page_content, re.IGNORECASE):
+            related_urls.append(urljoin(base_url, href))
+
+        return title or None, abstract or None, related_urls
+
+    def _candidate_urls(pid: str) -> list[str]:
+        urls = [f"{base_url}/patent/{pid}/en"]
+        match = re.match(r"^([A-Z]{2}\d+)([A-Z]\d?)$", pid)
+        if match and match.group(2).startswith("B"):
+            prefix = match.group(1)
+            urls.extend([
+                f"{base_url}/patent/{prefix}A1/en",
+                f"{base_url}/patent/{prefix}A2/en",
+            ])
+        return urls
+
     try:
-        with urllib.request.urlopen(req, timeout=5) as response:
-            page_content = response.read().decode('utf-8', errors='ignore')
-            
-            # Find DC.title meta tag
-            title_match = re.search(r'<meta[^>]*name="DC\.title"[^>]*content="([^"]*)"', page_content, re.IGNORECASE)
-            title = html.unescape(title_match.group(1).strip()) if title_match else None
-            
-            # Find DC.description meta tag (the abstract)
-            desc_match = re.search(r'<meta[^>]*name="DC\.description"[^>]*content="([^"]*)"', page_content, re.IGNORECASE)
-            abstract = html.unescape(desc_match.group(1).strip()) if desc_match else None
-            
-            return title, abstract
+        urls_to_try = _candidate_urls(patent_id)
+        seen_urls: set[str] = set()
+        best_title: Optional[str] = None
+
+        while urls_to_try:
+            url = urls_to_try.pop(0)
+            if url in seen_urls:
+                continue
+            seen_urls.add(url)
+
+            req = urllib.request.Request(url, headers=headers)
+            with urllib.request.urlopen(req, timeout=15) as response:
+                page_content = response.read().decode("utf-8", errors="ignore")
+
+            title, abstract, related_urls = _extract_details_from_html(page_content)
+            if title and not best_title:
+                best_title = title
+            if abstract:
+                return best_title or title or None, abstract
+
+            for related_url in related_urls:
+                if related_url not in seen_urls:
+                    urls_to_try.append(related_url)
+
+        return best_title, None
+
     except Exception as e:
-        logger.warning("[Scraper] Failed to fetch full details for %s: %s", patent_id, e)
+        logger.warning("[Scraper] Failed to fetch patent details for %s: %s", patent_id, e)
         return None, None
 
 
@@ -402,21 +635,30 @@ async def scrape_google_patents(
 
             _log(f"  [{idx:02d}] {patent_id} - {(title or '(no title)')[:60]}")
 
+        # Close browser — enrichment now uses fast urllib, no browser needed
         await browser.close()
 
-        # Enrich with full title and abstract in parallel
+        # Enrich with full title and abstract via JSON-LD (full, untruncated)
         if results:
-            _log(f"🔗 Enriching {len(results)} search results with full titles & abstracts...")
+            _log(f"🔗 Enriching {len(results)} results with full abstracts via JSON-LD...")
+            semaphore = asyncio.Semaphore(5)  # max 5 concurrent HTTP requests
+
             async def enrich_result(res):
                 if is_cancelled_callback and is_cancelled_callback():
                     return
                 pid = res.get("patent_id")
                 if pid:
-                    t, a = await asyncio.to_thread(_fetch_google_patent_details, pid)
+                    async with semaphore:
+                        t, a = await asyncio.to_thread(_fetch_google_patent_details_jsonld, pid)
                     if t:
                         res["title"] = t
-                    if a:
+                    if a and not a.endswith("…") and not a.endswith("..."):
                         res["abstract"] = a
+                        _log(f"  ✅ {pid} — {len(a)} chars")
+                    elif a:
+                        res["abstract"] = a  # take even if ends with … (better than nothing)
+                        _log(f"  ⚠️ {pid} — still truncated ({len(a)} chars)")
+
             await asyncio.gather(*(enrich_result(res) for res in results))
 
     return results
@@ -486,14 +728,15 @@ async def scrape_india_patents(
             if not captcha_callback:
                 await browser.close()
                 raise RuntimeError("Indian Patent Search requires CAPTCHA, but no CAPTCHA handler is configured.")
-            found = await _solve_india_captcha(page, captcha_callback, _log, dialog_messages, query, options, is_cancelled_callback)
-            if not found:
+            rows = await _solve_india_captcha(page, captcha_callback, _log, dialog_messages, query, options, max_results, is_cancelled_callback)
+            if rows is None: # None indicates "No Records Found"
                 await browser.close()
                 return []
         else:
             await page.click("input[type='submit'][value='Search']")
             try:
                 await page.wait_for_selector("#tableData tbody tr", timeout=45_000)
+                rows = await _extract_india_result_rows(page, max_results)
             except PlaywrightTimeoutError:
                 # Check if portal showed a "No Record Found" dialog
                 if dialog_messages:
@@ -503,18 +746,14 @@ async def scrape_india_patents(
                         await browser.close()
                         return []
                 raise
-
-        # Results confirmed inside _solve_india_captcha already
-
-
+        
+        _log(f"Found {len(rows)} Indian patent result rows for query: {query[:60]}")
+        
         ip_value = ""
         try:
             ip_value = await page.locator("input#IP").first.input_value(timeout=1000)
         except Exception:
             pass
-
-        rows = await _extract_india_result_rows(page, max_results)
-        _log(f"Found {len(rows)} Indian patent result rows for query: {query[:60]}")
 
         for idx, row in enumerate(rows, start=1):
             if is_cancelled_callback and is_cancelled_callback():
@@ -607,17 +846,18 @@ async def _solve_india_captcha(
     dialog_messages: list[str],
     query: str,
     options: dict,
+    max_results: int,
     is_cancelled_callback: Optional[Callable[[], bool]] = None,
-) -> bool:
+) -> Optional[list[dict]]:
     """
     Send CAPTCHA image to the app, wait for the answer, and submit.
-    Returns True if results were found, False if No Records Found dialog appeared.
+    Returns a list of rows on success, None if "No Records Found", or raises an error.
     Raises RuntimeError if CAPTCHA fails after all attempts.
     """
-    for attempt in range(1, 6):
+    for attempt in range(1, INDIA_CAPTCHA_MAX_ATTEMPTS + 1):
         if is_cancelled_callback and is_cancelled_callback():
             log_callback("⛔ Scrape cancellation detected during CAPTCHA solving. Terminating...")
-            return False
+            return []
         # Check if the search terms are missing (e.g. due to form reset on failed captcha)
         need_refill = False
         try:
@@ -658,7 +898,7 @@ async def _solve_india_captcha(
         captcha = page.locator("#Captcha")
         image_bytes = await captcha.screenshot(type="png")
         image_data_url = "data:image/png;base64," + base64.b64encode(image_bytes).decode("ascii")
-        log_callback(f"Indian Patent Search CAPTCHA required (attempt {attempt}/5).")
+        log_callback(f"Indian Patent Search CAPTCHA required (attempt {attempt}/{INDIA_CAPTCHA_MAX_ATTEMPTS}).")
 
         answer = (await captcha_callback(image_data_url)).strip()
         if not answer:
@@ -670,17 +910,17 @@ async def _solve_india_captcha(
 
         try:
             await page.wait_for_selector("#tableData tbody tr", timeout=15_000)
-            return True
+            return await _extract_india_result_rows(page, max_results)
         except PlaywrightTimeoutError:
             # Check if portal responded with No Record Found dialog
             if dialog_messages:
                 last_msg = dialog_messages[-1].lower()
                 if "no record" in last_msg or "record not found" in last_msg:
                     log_callback("ℹ️ Indian Patents Search returned: No Records Found.")
-                    return False
+                    return None
 
-            if attempt >= 5:
-                raise RuntimeError("Indian Patent Search CAPTCHA failed after 5 attempts.")
+            if attempt >= INDIA_CAPTCHA_MAX_ATTEMPTS:
+                raise RuntimeError(f"Indian Patent Search CAPTCHA failed after {INDIA_CAPTCHA_MAX_ATTEMPTS} attempts.")
             log_callback("CAPTCHA was not accepted. Restarting the search process from scratch...")
             try:
                 await page.goto(f"{INDIA_PATENTS_BASE}/PublicSearch/", wait_until="domcontentloaded", timeout=45_000)
@@ -795,127 +1035,12 @@ def save_csv(results: list[dict], filepath: Path) -> None:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-#  PDF export  (CSV-style table rendered with fpdf2)
-# ─────────────────────────────────────────────────────────────────────────────
-
-def _safe(text: str) -> str:
-    """Strip characters outside latin-1 range so fpdf core fonts don't choke."""
-    return text.encode("latin-1", errors="replace").decode("latin-1")
-
-
-def save_pdf(results: list[dict], filepath: Path, query: str) -> None:
-    if not PDF_AVAILABLE:
-        return
-
-    from fpdf.enums import XPos, YPos
-
-    pdf = FPDF(orientation="L", unit="mm", format="A4")  # Landscape for wider table
-    pdf.set_auto_page_break(auto=True, margin=15)
-    pdf.add_page()
-
-    # ── Header ──────────────────────────────────────────────────────────────
-    pdf.set_font("Helvetica", "B", 14)
-    pdf.set_fill_color(30, 50, 100)
-    pdf.set_text_color(255, 255, 255)
-    pdf.cell(
-        0, 10, _safe("Google Patents - Prior Art Search Results"),
-        new_x=XPos.LMARGIN, new_y=YPos.NEXT, align="C", fill=True
-    )
-
-    pdf.set_font("Helvetica", "", 9)
-    pdf.set_text_color(80, 80, 80)
-    meta = _safe(
-        f'Query: "{query}"   |   '
-        f'Generated: {datetime.now().strftime("%Y-%m-%d %H:%M")}   |   '
-        f'Results: {len(results)}'
-    )
-    pdf.cell(0, 6, meta, new_x=XPos.LMARGIN, new_y=YPos.NEXT, align="C")
-    pdf.ln(4)
-
-    # ── Column widths (landscape A4 usable ~267mm) ───────────────────────────
-    col_widths = {
-        "rank":      10,
-        "patent_id": 30,
-        "title":     80,
-        "abstract":  147,   # fills remaining space
-    }
-
-    # ── Table header ────────────────────────────────────────────────────────
-    pdf.set_font("Helvetica", "B", 9)
-    pdf.set_fill_color(50, 80, 160)
-    pdf.set_text_color(255, 255, 255)
-    for col, width in col_widths.items():
-        label = col.replace("_", " ").title()
-        pdf.cell(width, 8, label, border=1, fill=True, align="C")
-    pdf.ln()
-
-    # ── Table rows ──────────────────────────────────────────────────────────
-    pdf.set_font("Helvetica", "", 8)
-    fill_colors = [(245, 247, 255), (255, 255, 255)]
-
-    for i, row in enumerate(results):
-        r, g, b = fill_colors[i % 2]
-        pdf.set_fill_color(r, g, b)
-        pdf.set_text_color(20, 20, 20)
-
-        title_safe    = _safe(row["title"])
-        abstract_safe = _safe(row["abstract"])
-        pid_safe      = _safe(row["patent_id"])
-
-        # Calculate required row height based on wrapped text
-        title_lines    = _count_lines(title_safe,    col_widths["title"],    8)
-        abstract_lines = _count_lines(abstract_safe, col_widths["abstract"], 8)
-        row_h = max(title_lines, abstract_lines, 1) * 4 + 2
-
-        x_start = pdf.get_x()
-        y_start = pdf.get_y()
-
-        # Rank
-        pdf.multi_cell(col_widths["rank"], row_h, str(row["rank"]),
-                       border=1, align="C", fill=True,
-                       new_x=XPos.RIGHT, new_y=YPos.TOP, max_line_height=4)
-        pdf.set_xy(x_start + col_widths["rank"], y_start)
-
-        # Patent ID
-        pdf.multi_cell(col_widths["patent_id"], row_h, pid_safe,
-                       border=1, align="C", fill=True,
-                       new_x=XPos.RIGHT, new_y=YPos.TOP, max_line_height=4)
-        pdf.set_xy(x_start + col_widths["rank"] + col_widths["patent_id"], y_start)
-
-        # Title
-        pdf.multi_cell(col_widths["title"], row_h, title_safe,
-                       border=1, fill=True,
-                       new_x=XPos.RIGHT, new_y=YPos.TOP, max_line_height=4)
-        pdf.set_xy(
-            x_start + col_widths["rank"] + col_widths["patent_id"] + col_widths["title"],
-            y_start
-        )
-
-        # Abstract
-        pdf.multi_cell(col_widths["abstract"], row_h, abstract_safe,
-                       border=1, fill=True,
-                       new_x=XPos.RIGHT, new_y=YPos.TOP, max_line_height=4)
-
-        pdf.ln(row_h)
-
-    pdf.output(str(filepath))
-    print(f"[OK] PDF saved -> {filepath}")
-
-
-def _count_lines(text: str, col_width_mm: float, font_size: int) -> int:
-    """Rough estimate of how many lines the text will occupy."""
-    chars_per_line = max(1, int(col_width_mm / (font_size * 0.38)))
-    wrapped = textwrap.wrap(text, width=chars_per_line) or [""]
-    return len(wrapped)
-
-
-# ─────────────────────────────────────────────────────────────────────────────
 #  CLI entry point
 # ─────────────────────────────────────────────────────────────────────────────
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Scrape Google Patents and save top-N results to CSV + PDF"
+        description="Scrape patents and save top-N results to CSV"
     )
     parser.add_argument(
         "--query", "-q",
@@ -943,14 +1068,13 @@ def main():
 
     out_dir  = Path(__file__).parent
     csv_path = out_dir / f"{args.out}.csv"
-    pdf_path = out_dir / f"{args.out}.pdf"
 
     print(f"\n{'='*60}")
     print(f"  Google Patents Prior Art Scraper")
     print(f"{'='*60}")
     print(f"  Query   : {args.query}")
     print(f"  Max     : {args.max} results")
-    print(f"  Output  : {csv_path.name} + {pdf_path.name}")
+    print(f"  Output  : {csv_path.name}")
     print(f"{'='*60}\n")
 
     start = time.time()
@@ -965,7 +1089,6 @@ def main():
     print(f"\n[INFO] Extracted {len(results)} patents in {elapsed:.1f}s\n")
 
     save_csv(results, csv_path)
-    save_pdf(results, pdf_path, args.query)
 
     print(f"\n[OK] Done! Files written to: {out_dir.resolve()}")
 
