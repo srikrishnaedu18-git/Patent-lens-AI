@@ -667,12 +667,19 @@ async def _manual_pipeline(
                 )
 
             try:
+                curr_india_options = india_options
+                if isinstance(india_options, list):
+                    if idx - 1 < len(india_options):
+                        curr_india_options = india_options[idx - 1]
+                    else:
+                        curr_india_options = india_options[-1] if india_options else None
+
                 patents = await scrape_patents(
                     kw,
                     max_results,
                     progress_callback=_progress_sync,
                     sources=sources,
-                    india_options=india_options,
+                    india_options=curr_india_options,
                     captcha_callback=lambda image, tid=task_id, cm=captcha_mode, cs=captcha_service: _request_captcha(tid, image, cm, cs),
                     is_cancelled_callback=lambda: _task_cancelled.get(task_id, False),
                 )
@@ -884,7 +891,62 @@ async def trigger_manual_scrape(req: ManualScrapeRequest, background_tasks: Back
     if not raw_keywords:
         raise HTTPException(status_code=400, detail="Keywords cannot be empty")
 
-    keywords_list = [k.strip() for k in raw_keywords.split(",") if k.strip()]
+    is_india_active = "india" in sources
+    has_india_commas = False
+    if is_india_active and india_options and "rows" in india_options:
+        for row in india_options["rows"]:
+            text_val = (row.get("text") or "").strip()
+            if "," in text_val:
+                has_india_commas = True
+                break
+
+    if is_india_active and has_india_commas:
+        # Split by India query rows
+        split_rows = []
+        for row in india_options["rows"]:
+            text_val = (row.get("text") or "").strip()
+            terms = [t.strip() for t in text_val.split(",") if t.strip()]
+            split_rows.append(terms)
+        
+        max_terms = max(len(terms) for terms in split_rows) if split_rows else 0
+        keywords_list = []
+        india_options_list = []
+        for i in range(max_terms):
+            new_rows = []
+            for idx, row in enumerate(india_options["rows"]):
+                terms = split_rows[idx]
+                term = terms[i] if i < len(terms) else (terms[-1] if terms else "")
+                new_rows.append({
+                    "field": row.get("field", "TI"),
+                    "text": term,
+                    "logic": row.get("logic", "AND")
+                })
+            
+            # Construct combined keyword string for backend tracking and card title
+            parts = []
+            for idx, row in enumerate(new_rows):
+                if not row["text"]:
+                    continue
+                text_val = row["text"]
+                if " " in text_val or " AND " in text_val.upper() or " OR " in text_val.upper():
+                    text_val = f"({text_val})"
+                part = f"{row['field']}: {text_val}"
+                if idx > 0:
+                    parts.append(f"{new_rows[idx-1]['logic']} {part}")
+                else:
+                    parts.append(part)
+            combined_kw = " ".join(parts)
+            
+            keywords_list.append(combined_kw)
+            run_opt = india_options.copy()
+            run_opt["rows"] = new_rows
+            india_options_list.append(run_opt)
+        
+        india_options = india_options_list
+    else:
+        # Standard splitting by comma in the raw_keywords input
+        keywords_list = [k.strip() for k in raw_keywords.split(",") if k.strip()]
+
     if not keywords_list:
         raise HTTPException(status_code=400, detail="No valid keywords found")
 

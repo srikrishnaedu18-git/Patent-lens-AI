@@ -628,6 +628,31 @@ async function handleManualScrapeSubmit(e) {
     let displayList = [keywords];
     if (activeSource === "google") {
       displayList = keywords.split(",").map(k => k.trim()).filter(Boolean);
+    } else if (rows && rows.some(r => r.text && r.text.includes(","))) {
+      const splitRows = rows.map(r => (r.text || "").split(",").map(t => t.trim()).filter(Boolean));
+      const maxTerms = Math.max(...splitRows.map(r => r.length));
+      displayList = [];
+      for (let i = 0; i < maxTerms; i++) {
+        let parts = [];
+        for (let idx = 0; idx < rows.length; idx++) {
+          const terms = splitRows[idx];
+          const term = i < terms.length ? terms[i] : (terms[terms.length - 1] || "");
+          if (!term) continue;
+          let textVal = term;
+          if (textVal.includes(" ") || textVal.toUpperCase().includes(" AND ") || textVal.toUpperCase().includes(" OR ")) {
+            textVal = `(${textVal})`;
+          }
+          let part = `${rows[idx].field}: ${textVal}`;
+          if (idx > 0) {
+            parts.push(`${rows[idx - 1].logic} ${part}`);
+          } else {
+            parts.push(part);
+          }
+        }
+        if (parts.length > 0) {
+          displayList.push(parts.join(" "));
+        }
+      }
     }
     updateStagePill("planning", "done");
     updateStagePill("scraping", "active");
