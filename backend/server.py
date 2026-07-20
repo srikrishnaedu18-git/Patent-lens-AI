@@ -517,6 +517,7 @@ async def _ai_pipeline(
     sources: list[str],
     india_options: dict,
     task_id: str,
+    user_id: int,
     captcha_mode: str = "auto",
     captcha_service: str = "2captcha",
 ):
@@ -592,10 +593,11 @@ async def _ai_pipeline(
             ai_queries=queries,
             ai_cpc_codes=cpc_codes,
             ai_rationale=ai_rationale,
+            user_id=user_id,
         )
-        save_patents(search_id, unique)
+        save_patents(search_id, unique, user_id=user_id)
 
-        project_data = get_project_data(project_id)
+        project_data = get_project_data(project_id, user_id)
         await _push(queue, {
             "stage": "complete",
             "message": f"🎉 {len(unique)} patents saved. Click 'AI Audit' on the search card to run relevance analysis.",
@@ -620,6 +622,7 @@ async def _manual_pipeline(
     sources: list[str],
     india_options: dict,
     task_id: str,
+    user_id: int,
     captcha_mode: str = "auto",
     captcha_service: str = "2captcha",
 ):
@@ -675,8 +678,8 @@ async def _manual_pipeline(
                 )
                 if patents:
                     source_label = ", ".join(sorted({p.get("source", "Google Patents") for p in patents}))
-                    search_id = create_search(project_id, f"{kw} [{source_label}]", search_mode="manual")
-                    save_patents(search_id, patents)
+                    search_id = create_search(project_id, f"{kw} [{source_label}]", search_mode="manual", user_id=user_id)
+                    save_patents(search_id, patents, user_id=user_id)
                     scraped_runs.append({"keyword": kw, "count": len(patents), "search_id": search_id})
                     await _push(queue, {
                         "stage": "saving",
@@ -699,9 +702,9 @@ async def _manual_pipeline(
                 })
 
         if failed_keywords:
-            create_search(project_id, ",".join(failed_keywords), search_mode="failed")
+            create_search(project_id, ",".join(failed_keywords), search_mode="failed", user_id=user_id)
         if remaining_keywords:
-            create_search(project_id, ",".join(remaining_keywords), search_mode="failed")
+            create_search(project_id, ",".join(remaining_keywords), search_mode="failed", user_id=user_id)
 
         await _push(queue, {
             "stage": "complete",
@@ -710,7 +713,7 @@ async def _manual_pipeline(
             "failed_keywords": failed_keywords,
             "remaining_keywords": remaining_keywords,
             "terminated": _task_cancelled.get(task_id, False),
-            "data": get_project_data(project_id),
+            "data": get_project_data(project_id, user_id),
         })
 
     except Exception as exc:
@@ -720,7 +723,7 @@ async def _manual_pipeline(
 
 # ── Background pipeline: On-demand AI Audit ──────────────────────────────────
 
-async def _audit_pipeline(search_id: int, requirement: str, task_id: str):
+async def _audit_pipeline(search_id: int, requirement: str, task_id: str, user_id: int):
     """Audits all patents in a search run using Gemini and updates each row live."""
     queue = _task_queues[task_id]
 
@@ -732,7 +735,7 @@ async def _audit_pipeline(search_id: int, requirement: str, task_id: str):
         return
 
     try:
-        search = get_search_results(search_id)
+        search = get_search_results(search_id, user_id)
         patents = search.get("patents", [])
         if not patents:
             await _push(queue, {"stage": "error", "message": "No patents found for this search run."})
@@ -760,6 +763,7 @@ async def _audit_pipeline(search_id: int, requirement: str, task_id: str):
                     assessment.reasoning,
                     overlap_reasons=getattr(assessment, 'overlap_reasons', ''),
                     difference_reasons=getattr(assessment, 'difference_reasons', ''),
+                    user_id=user_id,
                 )
                 cat = assessment.relevance_category
                 emoji = "🔴" if cat == "closely_relevant" else ("🟡" if cat == "mildly_relevant" else "🟢")
@@ -795,7 +799,7 @@ async def _audit_pipeline(search_id: int, requirement: str, task_id: str):
                 })
 
         project_id = search.get("project_id")
-        project_data = get_project_data(project_id) if project_id else []
+        project_data = get_project_data(project_id, user_id) if project_id else []
         await _push(queue, {
             "stage": "complete",
             "message": f"✅ Audit complete — {total} patents assessed.",
@@ -894,6 +898,7 @@ async def trigger_manual_scrape(req: ManualScrapeRequest, background_tasks: Back
         sources=sources,
         india_options=india_options,
         task_id=task_id,
+        user_id=user_id,
         captcha_mode=req.captcha_mode,
         captcha_service=req.captcha_service,
     )
@@ -955,6 +960,7 @@ async def confirm_ai_search(req: ConfirmAISearchRequest, background_tasks: Backg
         sources=sources,
         india_options=india_options,
         task_id=task_id,
+        user_id=user_id,
         captcha_mode=req.captcha_mode,
         captcha_service=req.captcha_service,
     )
@@ -999,6 +1005,7 @@ async def trigger_audit(search_id: int, req: AuditRequest, background_tasks: Bac
         search_id=search_id,
         requirement=req.requirement,
         task_id=task_id,
+        user_id=user_id,
     )
     return {"status": "processing", "task_id": task_id}
 
