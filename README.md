@@ -17,9 +17,11 @@ PatentLens Studio is a FastAPI web app for collecting prior-art patents, saving 
 - On-demand AI relevance audit with Red, Yellow, Green, and Unaudited states.
 - Toolbar AI Audit for checked patents in Scraped History.
 - Toolbar Deep scrape for checked patents, saving detail-page body text through claims while excluding citation tables.
+- Patent cards and detail popups show color-coded states for AI audit and deep scrape completion.
+- Large patent detail popup with patent ID link, title, keyword context, abstract, AI audit details, and saved deep scrape text.
 - Live pipeline log for Planning, Scraping, Auditing, Saving, and Done.
 - Scrape cancellation through the Stop button.
-- CSV export with relevancy labels and audit fields.
+- CSV export with relevancy labels, audit fields, and spreadsheet-safe deep scrape text chunks.
 - SQLite locally, PostgreSQL when `DATABASE_URL` is configured.
 
 ## Repository Layout
@@ -169,6 +171,28 @@ IP India's public search requires CAPTCHA. PatentLens supports:
 
 The frontend listens for SSE events and resets the pipeline pills when the backend sends `reset_pipeline`.
 
+## Deep Scrape Handling
+
+Deep scrape is for opening saved patent URLs and pulling the larger detail-page body, including description and claims content, while excluding citation/footer tables.
+
+How it works:
+
+1. Select patents in Scraped History.
+2. Click `Deep scrape` in the toolbar, or use a patent card's own Deep scrape button.
+3. The backend fetches each patent URL and stores the extracted text in `patents.deep_scrape_text`.
+4. `patents.deep_scraped_at` records when the detail content was last refreshed.
+5. Clicking a patent card opens the detail popup, where the saved deep scrape text is shown below the normal abstract.
+
+Deep scrape state is color-coded:
+
+- Amber `Deep scrape` means the patent has not been deep scraped yet.
+- Green `Deep scraped` means detail text has been saved and can be refreshed.
+
+AI audit state is also color-coded:
+
+- Amber `Unaudited` means AI audit has not been run.
+- Red, Yellow, and Green show audited relevance levels.
+
 ## API Overview
 
 Authentication:
@@ -204,6 +228,21 @@ AI:
 Export:
 
 - `POST /api/projects/{project_id}/export/csv`
+
+## CSV Export Behavior
+
+Spreadsheet apps such as LibreOffice and Excel have a maximum character limit per cell. Deep-scraped patent bodies can exceed that limit, especially when claims are included.
+
+To keep exports loadable without losing content, PatentLens splits deep scrape text into safe columns:
+
+```text
+deep_scrape_text_part_1
+deep_scrape_text_part_2
+deep_scrape_text_part_3
+...
+```
+
+Most patents only need `deep_scrape_text_part_1`. Longer patents continue into additional numbered columns in the same CSV row.
 
 Settings:
 
@@ -255,6 +294,7 @@ pytest
 | 2Captcha never solves | Confirm `TWO_CAPTCHA_API_KEY`, account balance, and network access. |
 | Indian Patents repeatedly fails CAPTCHA | Try manual CAPTCHA mode or rerun later; the pipeline will restart automatically up to its configured limit. |
 | Google abstract looks like a claim snippet | Rerun the scrape after the full-abstract extractor fix; old saved records keep their old stored text. |
+| LibreOffice says maximum characters per cell exceeded | Re-export with the current backend. Deep scrape text is now split into `deep_scrape_text_part_*` columns. |
 
 ## Related Docs
 

@@ -824,7 +824,7 @@ async function handleGenerateQueries() {
 
     if (!res.ok) {
       const err = await res.json();
-      throw new Error(err.detail || "Failed to generate search queries.");
+      throw new Error(formatErrorDetail(err.detail, "Failed to generate search queries."));
     }
 
     const strategy = await res.json();
@@ -933,7 +933,7 @@ async function handleConfirmSearch() {
 
     if (!res.ok) {
       const err = await res.json();
-      throw new Error(err.detail || "Search request rejected.");
+      throw new Error(formatErrorDetail(err.detail, "Search request rejected."));
     }
 
     const { task_id } = await res.json();
@@ -1726,7 +1726,7 @@ async function downloadExport(format, patentIds = null) {
       const err = await response
         .json()
         .catch(() => ({ detail: "Export failed" }));
-      throw new Error(err.detail || "Export failed");
+      throw new Error(formatErrorDetail(err.detail, "Export failed"));
     }
     const blob = await response.blob();
     const downloadUrl = window.URL.createObjectURL(blob);
@@ -1809,7 +1809,7 @@ async function triggerAudit(searchId, queryText) {
     });
     if (!res.ok) {
       const err = await res.json();
-      throw new Error(err.detail || "Audit request rejected.");
+      throw new Error(formatErrorDetail(err.detail, "Audit request rejected."));
     }
     const { task_id } = await res.json();
     state.activeTaskId = task_id;
@@ -1868,7 +1868,7 @@ async function triggerSelectedAudit() {
     });
     if (!res.ok) {
       const err = await res.json();
-      throw new Error(err.detail || "Audit request rejected.");
+      throw new Error(formatErrorDetail(err.detail, "Audit request rejected."));
     }
     const { task_id } = await res.json();
     state.activeTaskId = task_id;
@@ -1893,7 +1893,9 @@ async function triggerDeepScrape(patentIdsOverride = null) {
     return;
   }
 
-  const patentIds = patentIdsOverride || getSelectedPatentIds();
+  const patentIds = (patentIdsOverride && Array.isArray(patentIdsOverride))
+    ? patentIdsOverride
+    : getSelectedPatentIds();
   if (patentIds.length === 0) {
     alert("Select at least one patent to deep scrape.");
     return;
@@ -1924,7 +1926,7 @@ async function triggerDeepScrape(patentIdsOverride = null) {
     });
     if (!res.ok) {
       const err = await res.json();
-      throw new Error(err.detail || "Deep scrape request rejected.");
+      throw new Error(formatErrorDetail(err.detail, "Deep scrape request rejected."));
     }
     const { task_id } = await res.json();
     state.activeTaskId = task_id;
@@ -2246,7 +2248,7 @@ async function handleTerminateScrape() {
     });
     if (!res.ok) {
       const err = await res.json();
-      alert(`Could not stop scrape: ${err.detail || "Unknown error"}`);
+      alert(`Could not stop scrape: ${formatErrorDetail(err.detail, "Unknown error")}`);
       elBtnTerminateScrape.disabled = false;
       elBtnTerminateScrape.innerText = "Stop";
     } else {
@@ -2469,7 +2471,7 @@ function setupEventListeners() {
         });
         if (!res.ok) {
           const err = await res.json();
-          throw new Error(err.detail || "Delete request failed");
+          throw new Error(formatErrorDetail(err.detail, "Delete request failed"));
         }
 
         // Hide modal
@@ -2499,7 +2501,7 @@ function setupEventListeners() {
     elBtnGlobalAiAudit.addEventListener("click", triggerSelectedAudit);
   }
   if (elBtnGlobalDeepScrape) {
-    elBtnGlobalDeepScrape.addEventListener("click", triggerDeepScrape);
+    elBtnGlobalDeepScrape.addEventListener("click", () => triggerDeepScrape());
   }
 
   // Source Toggle Buttons listeners
@@ -2598,6 +2600,25 @@ async function handleCreateProject(e) {
 }
 
 // ── Utility Helpers ──────────────────────────────────────────────────────────
+function formatErrorDetail(detail, fallback) {
+  if (!detail) return fallback;
+  if (typeof detail === "string") return detail;
+  if (Array.isArray(detail)) {
+    return detail.map(d => {
+      const locStr = d.loc ? d.loc.join('.') : '';
+      return locStr ? `${locStr}: ${d.msg}` : d.msg;
+    }).join("; ");
+  }
+  if (typeof detail === "object") {
+    try {
+      return JSON.stringify(detail);
+    } catch (_) {
+      return fallback;
+    }
+  }
+  return String(detail) || fallback;
+}
+
 function escapeHtml(text) {
   const map = {
     "&": "&amp;",
@@ -2881,7 +2902,7 @@ async function handleCaptchaSubmit(e) {
     });
     if (!res.ok) {
       const err = await res.json();
-      throw new Error(err.detail || "CAPTCHA submission failed");
+      throw new Error(formatErrorDetail(err.detail, "CAPTCHA submission failed"));
     }
     writeLogLine(
       "Submitted CAPTCHA answer. Waiting for verification...",

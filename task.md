@@ -66,20 +66,50 @@ Status key:
   - Deep scrape stores detail-page text through claims while excluding citation/footer tables.
   - Patent card click opens a large modal with ID, title, abstract, AI audit info, and deep scraped details.
 
+- [x] Improve patent detail popup styling and link affordance.
+  - Added body padding inside the large patent detail modal.
+  - Added an external-link icon to the patent ID badge.
+  - Styled the modal patent ID badge with stronger spacing and border treatment.
+  - Verified with `node --check frontend/app.js`.
+
+- [x] Color-code deep scrape state.
+  - Amber `Deep scrape` means no deep scrape text has been saved yet.
+  - Green `Deep scraped` means detail text exists for that patent.
+  - Applied the same state styling in patent cards and the detail popup.
+  - Verified with `node --check frontend/app.js`.
+
+- [x] Color-code AI audit pending state.
+  - Amber `Unaudited` now clearly means AI audit is pending.
+  - Red, Yellow, and Green remain the completed AI audit result categories.
+  - Added subtle amber card highlighting for unaudited patents.
+  - Verified with `node --check frontend/app.js`.
+
+- [x] Fix LibreOffice CSV cell-limit warning for deep scrape exports.
+  - Deep scrape text is no longer exported as one oversized cell.
+  - Added `CSV_CELL_SAFE_LIMIT = 30000` in `backend/server.py`.
+  - CSV exports now split long detail text into `deep_scrape_text_part_1`, `deep_scrape_text_part_2`, and further numbered columns as needed.
+  - Verified server syntax with `python3 -m py_compile backend/server.py`.
+  - Verified chunk behavior with the project virtualenv.
+
 - [x] Restart backend after fixes.
-  - Started with `ENV=production venv/bin/python backend/server.py`.
-  - Confirmed root UI returns `200 OK`.
+  - Restarted with `venv/bin/python backend/server.py`.
+  - Confirmed the server is listening on `127.0.0.1:8000`.
+  - Confirmed `GET /api/auth/me` responds.
 
 - [x] Update project documentation.
   - Rewrote `README.md` for current repo structure and behavior.
   - Added `architecture.md`.
   - Added this `task.md`.
+  - Updated docs again for deep scrape modal behavior, visual status colors, and CSV chunked export.
 
 ## Verification Used
 
 - [x] `python3 -m py_compile backend/server.py backend/scraper.py`
+- [x] `python3 -m py_compile backend/server.py`
 - [x] `node --check frontend/app.js`
 - [x] `curl -sS -I http://127.0.0.1:8000/`
+- [x] `curl -sS http://127.0.0.1:8000/api/auth/me`
+- [x] Direct virtualenv check for CSV deep scrape chunk sizing.
 - [x] Direct mocked regression check for `scrape_patents` return behavior.
 - [x] Direct mocked regression check for Google B-to-A abstract fallback.
 - [~] `venv/bin/python -m pytest`
@@ -99,3 +129,4 @@ Status key:
 - Rerunning a scrape stores the improved abstract for newly saved rows.
 - In-memory SSE task queues are lost if the backend restarts.
 - CAPTCHA restart logic is intentionally capped to avoid endless retries.
+- Deep scrape CSV export may create multiple `deep_scrape_text_part_*` columns for very long patents so spreadsheet apps can load the file safely.

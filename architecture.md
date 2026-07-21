@@ -49,8 +49,18 @@ Important frontend flows:
 - CAPTCHA challenge images are shown when SSE emits `stage: "captcha"`.
 - Pipeline pill state is updated in `handleSSEStageUpdate`.
 - When an SSE event includes `reset_pipeline`, the frontend reinitializes the visible pipeline pills.
+- Scraped History toolbar actions operate on checked patents: AI Audit, Deep scrape, CSV export, and Delete.
+- Patent card clicks open the detail modal with ID, title, keyword context, abstract, AI audit content, and deep scrape content.
+- Patent ID badges link to the original patent URL and show an external-link icon.
 
 The Scraped History UI renders whatever is stored in the DB. It does not intentionally truncate abstracts in JavaScript.
+
+Visual state rules:
+
+- `relevancy-badge--unaudited` is amber for pending AI audit.
+- `relevancy-badge--red`, `--yellow`, and `--green` show completed AI audit categories.
+- `btn-card-deep-scrape--pending` is amber for patents without saved deep scrape text.
+- `btn-card-deep-scrape--done` is green for patents with saved deep scrape text.
 
 ## Backend API Layer
 
@@ -230,6 +240,8 @@ Patent rows use canonical keys:
 - `url`
 - optional `confidence_score`
 - optional `ai_reasoning`
+- optional `deep_scrape_text`
+- optional `deep_scraped_at`
 
 The DB layer verifies ownership when `user_id` is supplied.
 
@@ -262,6 +274,17 @@ Export routes load selected patents or all project patents, enrich relevancy lab
 
 Export fields are defined in `EXPORT_FIELDS` in `backend/server.py`.
 
+Deep scrape text is intentionally not exported as one huge CSV cell. Spreadsheet programs can reject or truncate cells over their character limit, so the export route chunks `deep_scrape_text` into numbered fields:
+
+```text
+deep_scrape_text_part_1
+deep_scrape_text_part_2
+deep_scrape_text_part_3
+...
+```
+
+The chunk size is controlled by `CSV_CELL_SAFE_LIMIT` in `backend/server.py`. This keeps all content in the same patent row while avoiding LibreOffice and Excel cell-limit warnings.
+
 ## Deep Scrape Flow
 
 1. User checks patents in Scraped History.
@@ -272,6 +295,8 @@ Export fields are defined in `EXPORT_FIELDS` in `backend/server.py`.
 6. The extractor saves title, abstract, description, and claims text, stopping before Google's citations/footer area and removing table-like blocks.
 7. Progress is streamed through the normal Live Pipeline Log.
 8. Saved text is stored in `patents.deep_scrape_text` with `deep_scraped_at`.
+9. The frontend reloads project history; deep-scraped cards switch from amber pending state to green done state.
+10. Clicking a patent card shows the saved deep scrape content inside the patent detail modal.
 
 ## Operational Notes
 
