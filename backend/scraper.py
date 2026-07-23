@@ -222,7 +222,7 @@ def fetch_patent_deep_scrape(url: str, patent_id: str = "") -> str:
 #  Core scraping logic
 # ─────────────────────────────────────────────────────────────────────────────
 
-GOOGLE_PATENTS_SEARCH = "https://patents.google.com/?q={query}&num=20"
+GOOGLE_PATENTS_SEARCH = "https://patents.google.com/?q={query}&num={num}"
 INDIA_PATENTS_BASE = "https://iprsearch.ipindia.gov.in"
 VALID_PATENT_SOURCES = {"google", "india", "espacenet"}
 INDIA_CAPTCHA_MAX_ATTEMPTS = 2
@@ -815,8 +815,9 @@ async def scrape_google_patents(
                 progress_callback(msg)
             except Exception as cb_err:
                 logger.debug("progress_callback error: %s", cb_err)
+    num_per_page = max(100, max_results)
     encoded_query = query.replace(" ", "+")
-    url = GOOGLE_PATENTS_SEARCH.format(query=encoded_query)
+    url = GOOGLE_PATENTS_SEARCH.format(query=encoded_query, num=num_per_page)
 
     results: list[dict] = []
 
@@ -848,7 +849,21 @@ async def scrape_google_patents(
             logger.warning("[Scraper] Timeout on selector for query: %s", query)
 
         # Brief settle time for Web Components to render
-        await asyncio.sleep(2)
+        await asyncio.sleep(1.5)
+
+        # Programmatically trigger 'Results / page' dropdown to 100 if requested results > 10
+        try:
+            dropdown_label = await page.query_selector('dropdown-menu[label="Results / page"] span.label') or await page.query_selector('span.style-scope.dropdown-menu:has-text("Results / page")')
+            if dropdown_label:
+                await dropdown_label.click()
+                await asyncio.sleep(0.5)
+                opt_100 = await page.query_selector('div.item.style-scope.dropdown-menu:has-text("100")')
+                if opt_100:
+                    _log("⚡ Set Google Patents results-per-page dropdown to 100 max capacity")
+                    await opt_100.click()
+                    await asyncio.sleep(2.0)
+        except Exception as drop_err:
+            logger.debug("[Scraper] Dropdown click optional attempt skipped: %s", drop_err)
 
         # ── Extract items ────────────────────────────────────────────────────
         items = await page.query_selector_all("search-result-item")
