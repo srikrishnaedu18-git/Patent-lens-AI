@@ -2230,6 +2230,54 @@ button.stage-pill#pill-auditing:hover {
   background-color: var(--danger-bg);
 }
 
+/* Espacenet Query Builder Styles */
+.espacenet-query-rows-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  max-height: 280px;
+  overflow-y: auto;
+  padding-right: 4px;
+  margin-bottom: 20px;
+}
+
+.espacenet-query-row {
+  display: grid;
+  grid-template-columns: auto auto 1fr 85px auto;
+  gap: 8px;
+  align-items: center;
+  background-color: var(--bg-primary);
+  padding: 8px 12px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border-color);
+}
+
+.espacenet-query-row select,
+.espacenet-query-row input {
+  background-color: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+  color: var(--text-primary);
+  border-radius: var(--radius-sm);
+  padding: 8px;
+  font-size: 0.85rem;
+  outline: none;
+}
+
+.espacenet-query-row input {
+  width: 100%;
+}
+
+.espacenet-query-row select:focus,
+.espacenet-query-row input:focus {
+  border-color: var(--accent);
+}
+
+@media (max-width: 650px) {
+  .espacenet-query-row {
+    grid-template-columns: 1fr 1fr;
+  }
+}
+
 /* CAPTCHA Modal */
 .modal-captcha {
   max-width: 400px;

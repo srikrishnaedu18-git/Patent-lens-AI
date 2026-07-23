@@ -381,6 +381,14 @@
                     >
                       Indian Patents
                     </button>
+                    <button
+                      type="button"
+                      id="btn-source-espacenet"
+                      class="source-toggle-btn"
+                      data-source="espacenet"
+                    >
+                      Espacenet
+                    </button>
                   </div>
                 </div>
                 <form id="scrape-form-manual" class="scrape-form">
@@ -492,7 +500,98 @@
                         margin-bottom: 12px;
                       "
                     >
-                      <!-- Dynamically populated rows -->
+                    </div>
+                  </div>
+
+                  <!-- Espacenet Fields -->
+                  <div
+                    id="group-keywords-espacenet"
+                    class="source-fields-group hidden"
+                  >
+                    <div
+                      class="espacenet-header-bar"
+                      style="
+                        display: flex;
+                        justify-content: space-between;
+                        align-items: center;
+                        margin-bottom: 12px;
+                        flex-wrap: wrap;
+                        gap: 10px;
+                      "
+                    >
+                      <div style="display: flex; align-items: center; gap: 10px;">
+                        <span
+                          class="field-label"
+                          style="font-weight: 600; font-size: 0.9rem"
+                          >Espacenet Advanced Search Query Builder</span
+                        >
+                        <div class="espacenet-lang-selector-wrap" style="display: flex; align-items: center; gap: 6px;">
+                          <label for="espacenet-opt-lang" style="font-size: 0.8rem; color: var(--text-secondary);">Lang:</label>
+                          <select id="espacenet-opt-lang" class="espacenet-lang-select" style="padding: 4px 8px; font-size: 0.8rem; border-radius: var(--radius-sm); background: var(--bg-secondary); border: 1px solid var(--border-color); color: var(--text-primary);">
+                            <option value="en" selected>English (en)</option>
+                            <option value="fr">French (fr)</option>
+                            <option value="de">German (de)</option>
+                          </select>
+                        </div>
+                      </div>
+                      <div style="display: flex; gap: 8px">
+                        <button
+                          type="button"
+                          id="btn-manual-espacenet-add-row"
+                          class="btn-secondary btn-sm"
+                          style="
+                            padding: 6px 12px;
+                            font-size: 0.8rem;
+                            display: flex;
+                            align-items: center;
+                            gap: 4px;
+                          "
+                        >
+                          <svg
+                            class="icon-sm"
+                            viewBox="0 0 24 24"
+                            fill="none"
+                            style="width: 14px; height: 14px"
+                          >
+                            <path
+                              d="M12 5V19M5 12H19"
+                              stroke="currentColor"
+                              stroke-width="2"
+                              stroke-linecap="round"
+                            />
+                          </svg>
+                          + Field
+                        </button>
+                        <button
+                          type="button"
+                          id="btn-manual-espacenet-reset"
+                          class="btn-secondary btn-sm"
+                          style="
+                            padding: 6px 12px;
+                            font-size: 0.8rem;
+                            display: flex;
+                            align-items: center;
+                            gap: 4px;
+                          "
+                        >
+                          Reset
+                        </button>
+                      </div>
+                    </div>
+                    <div
+                      id="manual-espacenet-query-rows-container"
+                      class="espacenet-query-rows-list"
+                      style="
+                        display: flex;
+                        flex-direction: column;
+                        gap: 12px;
+                        max-height: 280px;
+                        overflow-y: auto;
+                        padding-right: 4px;
+                        margin-bottom: 12px;
+                      "
+                    >
+                      <!-- Dynamically populated Espacenet rows -->
                     </div>
                   </div>
 
@@ -1014,6 +1113,15 @@
                   <div class="option-card-desc">
                     Searches the IP India public patent search portal and saves
                     application number, title, and abstract.
+                  </div>
+                </div>
+              </label>
+              <label class="option-card">
+                <input type="checkbox" name="search-source" value="espacenet" />
+                <div class="option-card-body">
+                  <div class="option-card-title">Espacenet</div>
+                  <div class="option-card-desc">
+                    Searches EPO Espacenet patent database with full Advanced Search query builder support.
                   </div>
                 </div>
               </label>

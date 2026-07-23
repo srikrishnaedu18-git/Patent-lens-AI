@@ -22,7 +22,8 @@ import sys
 import time
 from pathlib import Path
 from typing import Awaitable, Callable, Optional
-from urllib.parse import urlparse
+from urllib.parse import urlparse, quote
+import httpx
 
 from playwright.async_api import async_playwright, TimeoutError as PlaywrightTimeoutError
 from dotenv import load_dotenv
@@ -154,7 +155,7 @@ def fetch_patent_deep_scrape(url: str, patent_id: str = "") -> str:
 
 GOOGLE_PATENTS_SEARCH = "https://patents.google.com/?q={query}&num=20"
 INDIA_PATENTS_BASE = "https://iprsearch.ipindia.gov.in"
-VALID_PATENT_SOURCES = {"google", "india"}
+VALID_PATENT_SOURCES = {"google", "india", "espacenet"}
 INDIA_CAPTCHA_MAX_ATTEMPTS = 2
 
 INDIA_SEARCH_FIELDS = {
@@ -163,6 +164,206 @@ INDIA_SEARCH_FIELDS = {
 }
 INDIA_DATE_FIELDS = {"APD", "PD", "PDG", "PRD"}
 INDIA_LOGIC_FIELDS = {"AND", "OR", "NOT"}
+
+
+async def _get_epo_ops_access_token(client: httpx.AsyncClient, key: str, secret: str) -> Optional[str]:
+    """Obtain OAuth 2.0 access token from EPO OPS API."""
+    if not key or not secret:
+        return None
+    try:
+        credentials = f"{key}:{secret}"
+        encoded_credentials = base64.b64encode(credentials.encode("utf-8")).decode("utf-8")
+        headers = {
+            "Authorization": f"Basic {encoded_credentials}",
+            "Content-Type": "application/x-www-form-urlencoded",
+        }
+        res = await client.post(
+            "https://ops.epo.org/3.2/auth/accesstoken",
+            headers=headers,
+            data={"grant_type": "client_credentials"},
+            timeout=10.0,
+        )
+        if res.status_code == 200:
+            data = res.json()
+            return data.get("access_token")
+        else:
+            logger.warning("[EPO OPS] Authentication failed (%s): %s", res.status_code, res.text[:200])
+            return None
+    except Exception as err:
+        logger.warning("[EPO OPS] Token request exception: %s", err)
+        return None
+
+
+def _parse_epo_ops_search_response(data: dict, max_results: int = 20) -> list[dict]:
+    """Parse JSON response from EPO OPS Published Data Search API into canonical patent items."""
+    results = []
+    try:
+        world_data = data.get("ops:world-patent-data", {})
+        biblio_search = world_data.get("ops:biblio-search", {})
+        search_result = biblio_search.get("ops:search-result", {})
+        ref_list = search_result.get("ops:publication-reference", [])
+        if isinstance(ref_list, dict):
+            ref_list = [ref_list]
+
+        rank = 1
+        for ref in ref_list:
+            if rank > max_results:
+                break
+            doc_id_list = ref.get("document-id", [])
+            if isinstance(doc_id_list, dict):
+                doc_id_list = [doc_id_list]
+
+            doc_num = ""
+            country = ""
+            kind = ""
+            for d in doc_id_list:
+                doc_num = d.get("doc-number", {}).get("$", "") or doc_num
+                country = d.get("country", {}).get("$", "") or country
+                kind = d.get("kind", {}).get("$", "") or kind
+
+            full_id = f"{country}{doc_num}{kind}".strip() or doc_num or f"EP{rank}"
+            doc_key = f"{country}{doc_num}".strip()
+            title_text = f"Espacenet Patent {full_id}"
+            abstract_text = "Detailed abstract available on Espacenet portal."
+
+            url = f"https://worldwide.espacenet.com/patent/search?q=pn%3D{quote(full_id)}"
+
+            results.append({
+                "rank": rank,
+                "patent_id": full_id,
+                "doc_key": doc_key,
+                "title": title_text,
+                "abstract": abstract_text,
+                "url": url,
+                "source": "espacenet",
+            })
+            rank += 1
+    except Exception as parse_err:
+        logger.error("[EPO OPS] Error parsing search response: %s", parse_err)
+
+    return results
+
+
+def _enrich_epo_ops_results(results: list[dict], biblio_data: dict) -> list[dict]:
+    """Enrich initial patent references with full titles and abstracts from EPO OPS biblio response."""
+    try:
+        world_data = biblio_data.get("ops:world-patent-data", {})
+        exchange_docs = world_data.get("exchange-documents", {}).get("exchange-document", [])
+        if isinstance(exchange_docs, dict):
+            exchange_docs = [exchange_docs]
+
+        doc_map = {}
+        for doc in exchange_docs:
+            if not isinstance(doc, dict):
+                continue
+            country = doc.get("@country", "")
+            doc_num = doc.get("@doc-number", "")
+            epodoc_key = f"{country}{doc_num}".strip().upper()
+
+            # Extract Title
+            biblio = doc.get("bibliographic-data", {})
+            titles = biblio.get("invention-title", [])
+            if isinstance(titles, dict):
+                titles = [titles]
+            eng_title = next((t.get("$", "") for t in titles if isinstance(t, dict) and t.get("@lang") == "en"), "")
+            if not eng_title and titles and isinstance(titles[0], dict):
+                eng_title = titles[0].get("$", "")
+
+            # Extract Abstract
+            abstracts = doc.get("abstract", [])
+            if isinstance(abstracts, dict):
+                abstracts = [abstracts]
+            abstract_text = ""
+            for a in abstracts:
+                if isinstance(a, dict):
+                    p = a.get("p", {})
+                    if isinstance(p, dict):
+                        abstract_text = p.get("$", "") or abstract_text
+                    elif isinstance(p, list):
+                        abstract_text = " ".join([item.get("$", "") for item in p if isinstance(item, dict)])
+                    if abstract_text:
+                        break
+
+            doc_map[epodoc_key] = {"title": eng_title, "abstract": abstract_text}
+
+        for item in results:
+            pid = item.get("patent_id", "").upper()
+            matched = next((info for key, info in doc_map.items() if key in pid or pid in key), None)
+            if matched:
+                if matched.get("title"):
+                    item["title"] = matched["title"]
+                if matched.get("abstract"):
+                    item["abstract"] = matched["abstract"]
+
+    except Exception as enrich_err:
+        logger.error("[EPO OPS] Error enriching biblio data: %s", enrich_err)
+
+    return results
+
+
+async def scrape_espacenet_patents(
+    query: str,
+    max_results: int = 20,
+    progress_callback: Optional[Callable[[str], None]] = None,
+    espacenet_options: Optional[dict] = None,
+    is_cancelled_callback: Optional[Callable[[], bool]] = None,
+) -> list[dict]:
+    """
+    Search EPO Espacenet patent portal using EPO Open Patent Services (OPS) API.
+    """
+    def _log(msg: str):
+        logger.info(msg)
+        if progress_callback:
+            try:
+                progress_callback(msg)
+            except Exception as cb_err:
+                logger.debug("progress_callback error: %s", cb_err)
+
+    _log(f"Initializing Espacenet search for query: {query}")
+
+    key = os.getenv("EPO_OPS_CONSUMER_KEY", "").strip()
+    secret = os.getenv("EPO_OPS_CONSUMER_SECRET", "").strip()
+
+    cql_query = query.strip()
+    if not any(tag in cql_query for tag in ["=", "txt=", "ti=", "ab=", "pn=", "pa=", "in="]):
+        cql_query = f'txt="{cql_query}"'
+
+    async with httpx.AsyncClient(timeout=25.0, follow_redirects=True) as client:
+        headers = {"Accept": "application/json"}
+        token = await _get_epo_ops_access_token(client, key, secret)
+        if token:
+            headers["Authorization"] = f"Bearer {token}"
+            _log("Authenticated with EPO OPS API credentials.")
+        else:
+            _log("Querying EPO OPS API (Public Mode)...")
+
+        ops_url = f"https://ops.epo.org/rest-services/published-data/search?q={quote(cql_query)}&Range=1-{max_results}"
+
+        try:
+            res = await client.get(ops_url, headers=headers)
+            if res.status_code == 200:
+                _log("Received search response from EPO OPS API.")
+                raw_results = _parse_epo_ops_search_response(res.json(), max_results)
+                if raw_results:
+                    _log(f"Retrieved {len(raw_results)} patent IDs. Fetching titles & abstracts...")
+                    epodoc_ids = [item.get("doc_key") or item["patent_id"] for item in raw_results if item.get("patent_id")]
+                    if epodoc_ids:
+                        batch_str = ",".join(epodoc_ids[:max_results])
+                        biblio_url = f"https://ops.epo.org/rest-services/published-data/publication/epodoc/{batch_str}/biblio,abstract"
+                        bib_res = await client.get(biblio_url, headers=headers)
+                        if bib_res.status_code == 200:
+                            raw_results = _enrich_epo_ops_results(raw_results, bib_res.json())
+
+                    _log(f"Successfully processed {len(raw_results)} Espacenet patents.")
+                    return raw_results
+            else:
+                _log(f"EPO OPS API returned HTTP status {res.status_code}.")
+        except Exception as req_err:
+            _log(f"EPO OPS API request failed: {req_err}")
+
+    _log("Espacenet search completed.")
+    return []
+
 
 
 def _env_bool(name: str, default: bool = False) -> bool:
@@ -267,6 +468,7 @@ async def scrape_patents(
     progress_callback: Optional[Callable[[str], None]] = None,
     sources: Optional[list[str]] = None,
     india_options: Optional[dict] = None,
+    espacenet_options: Optional[dict] = None,
     captcha_callback: Optional[Callable[[str], Awaitable[str]]] = None,
     is_cancelled_callback: Optional[Callable[[], bool]] = None,
 ) -> list[dict]:
@@ -280,18 +482,12 @@ async def scrape_patents(
     all_results: list[dict] = []
     errors: list[str] = []
 
-    source_handlers = {
-        "google": scrape_google_patents,
-        "india": scrape_india_patents,
-    }
-
     for source in selected_sources:
-        handler = source_handlers[source]
         try:
             if progress_callback:
                 progress_callback(f"Starting {source.title()} Patents search for: {query[:80]}")
             if source == "india":
-                results = await handler(
+                results = await scrape_india_patents(
                     query,
                     max_results,
                     progress_callback=progress_callback,
@@ -299,8 +495,16 @@ async def scrape_patents(
                     captcha_callback=captcha_callback,
                     is_cancelled_callback=is_cancelled_callback,
                 )
+            elif source == "espacenet":
+                results = await scrape_espacenet_patents(
+                    query,
+                    max_results,
+                    progress_callback=progress_callback,
+                    espacenet_options=espacenet_options,
+                    is_cancelled_callback=is_cancelled_callback,
+                )
             else:
-                results = await handler(
+                results = await scrape_google_patents(
                     query,
                     max_results,
                     progress_callback=progress_callback,

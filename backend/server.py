@@ -208,6 +208,7 @@ class ManualScrapeRequest(BaseModel):
     max_results: int = 20
     sources: list[str] = Field(default_factory=lambda: ["google"])
     india_options: dict = Field(default_factory=dict)
+    espacenet_options: dict = Field(default_factory=dict)
     captcha_mode: str = "auto"       # "auto" | "manual"
     captcha_service: str = "2captcha" # "2captcha" (for auto)
 
@@ -224,6 +225,7 @@ class ConfirmAISearchRequest(BaseModel):
     audit_mode: str = "sequential"
     sources: list[str] = Field(default_factory=lambda: ["google"])
     india_options: dict = Field(default_factory=dict)
+    espacenet_options: dict = Field(default_factory=dict)
     captcha_mode: str = "auto"
     captcha_service: str = "2captcha"
 

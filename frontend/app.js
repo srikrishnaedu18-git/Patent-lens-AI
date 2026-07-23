@@ -43,6 +43,13 @@ let state = {
     logic_field: "AND",
     rows: [{ field: "TI", text: "", logic: "AND" }],
   },
+  espacenetOptions: {
+    query_lang: "en",
+    rows: [
+      { field: "TI", operator: "all", text: "", logic: "AND" },
+      { field: "TA", operator: "all", text: "", logic: "AND" },
+    ],
+  },
   activeCaptchaTaskId: null,
   captchaMode: "auto", // "auto" | "manual"
   captchaService: "2captcha", // currently only "2captcha" for auto
@@ -199,9 +206,10 @@ const elIndiaOptFromDate = document.getElementById("india-opt-from-date");
 const elIndiaOptToDate = document.getElementById("india-opt-to-date");
 const elBtnIndiaCancel = document.getElementById("btn-india-cancel");
 
-// Manual search panel India elements
+// Manual search panel Espacenet elements
 const elBtnSourceGoogle = document.getElementById("btn-source-google");
 const elBtnSourceIndia = document.getElementById("btn-source-india");
+const elBtnSourceEspacenet = document.getElementById("btn-source-espacenet");
 const elBtnManualIndiaAddRow = document.getElementById(
   "btn-manual-india-add-row",
 );
@@ -211,6 +219,30 @@ const elBtnManualIndiaRemoveRow = document.getElementById(
 const elManualIndiaQueryRowsContainer = document.getElementById(
   "manual-india-query-rows-container",
 );
+
+const elBtnManualEspacenetAddRow = document.getElementById(
+  "btn-manual-espacenet-add-row",
+);
+const elBtnManualEspacenetReset = document.getElementById(
+  "btn-manual-espacenet-reset",
+);
+const elManualEspacenetQueryRowsContainer = document.getElementById(
+  "manual-espacenet-query-rows-container",
+);
+const elEspacenetOptLang = document.getElementById("espacenet-opt-lang");
+
+const ESPACENET_SEARCH_FIELDS_MAP = {
+  TI: { label: "Title", defaultOperator: "all", placeholder: "e.g. quantum computing" },
+  TA: { label: "Title or abstract", defaultOperator: "all", placeholder: "e.g. neural network" },
+  PN: { label: "Publication number", defaultOperator: "any", placeholder: "e.g. EP1234567" },
+  AP: { label: "Application number", defaultOperator: "any", placeholder: "e.g. EP2020012345" },
+  PR: { label: "Priority number", defaultOperator: "any", placeholder: "e.g. US201962800000" },
+  PD: { label: "Publication date", defaultOperator: "=", placeholder: "e.g. 2023 or 2020:2024" },
+  PA: { label: "Applicants", defaultOperator: "any", placeholder: "e.g. Siemens, IBM" },
+  IN: { label: "Inventors", defaultOperator: "any", placeholder: "e.g. Smith John" },
+  CPC: { label: "CPC classification", defaultOperator: "any", placeholder: "e.g. H04L67/10" },
+  IPC: { label: "IPC classification", defaultOperator: "any", placeholder: "e.g. G01N33/50" },
+};
 
 const elModalCaptcha = document.getElementById("modal-captcha");
 const elCaptchaImg = document.getElementById("captcha-img");
@@ -223,6 +255,7 @@ document.addEventListener("DOMContentLoaded", () => {
   initTheme();
   initSearchSources();
   initIndiaOptions();
+  initEspacenetOptions();
   initAuth();
   checkAuth();
   setupEventListeners();
@@ -365,7 +398,7 @@ function initSearchSources() {
   const saved = JSON.parse(localStorage.getItem("searchSources") || "null");
   if (Array.isArray(saved) && saved.length > 0) {
     state.searchSources = saved.filter((src) =>
-      ["google", "india"].includes(src),
+      ["google", "india", "espacenet"].includes(src),
     );
   }
   if (state.searchSources.length === 0) state.searchSources = ["google"];
@@ -401,14 +434,22 @@ function updateSourceFieldsVisibility() {
   const activeSource = state.searchSources[0] || "google";
   const elGoogleFields = document.getElementById("group-keywords-google");
   const elIndiaFields = document.getElementById("group-keywords-india");
+  const elEspacenetFields = document.getElementById("group-keywords-espacenet");
 
   if (activeSource === "google") {
     if (elGoogleFields) elGoogleFields.classList.remove("hidden");
     if (elIndiaFields) elIndiaFields.classList.add("hidden");
-  } else {
+    if (elEspacenetFields) elEspacenetFields.classList.add("hidden");
+  } else if (activeSource === "india") {
     if (elGoogleFields) elGoogleFields.classList.add("hidden");
     if (elIndiaFields) elIndiaFields.classList.remove("hidden");
+    if (elEspacenetFields) elEspacenetFields.classList.add("hidden");
     renderManualIndiaQueryRows();
+  } else if (activeSource === "espacenet") {
+    if (elGoogleFields) elGoogleFields.classList.add("hidden");
+    if (elIndiaFields) elIndiaFields.classList.add("hidden");
+    if (elEspacenetFields) elEspacenetFields.classList.remove("hidden");
+    renderManualEspacenetQueryRows();
   }
 }
 
@@ -416,6 +457,7 @@ function getSourceLabel() {
   const labels = {
     google: "Google Patents",
     india: "Indian Patents",
+    espacenet: "Espacenet",
   };
   return state.searchSources.map((src) => labels[src] || src).join(", ");
 }
@@ -601,6 +643,7 @@ async function handleManualScrapeSubmit(e) {
   let keywords = "";
   let maxResults = parseInt(elLimitInputManual.value, 10);
   let indiaRows = [];
+  let espacenetRows = [];
 
   if (activeSource === "google") {
     keywords = elKeywordsInput.value.trim();
@@ -608,8 +651,51 @@ async function handleManualScrapeSubmit(e) {
       alert("Please enter at least one keyword.");
       return;
     }
+  } else if (activeSource === "espacenet") {
+    if (elManualEspacenetQueryRowsContainer) {
+      elManualEspacenetQueryRowsContainer
+        .querySelectorAll(".espacenet-query-row")
+        .forEach((rowDiv) => {
+          const field = rowDiv.querySelector(".row-field").value;
+          const operator = rowDiv.querySelector(".row-operator").value;
+          const text = rowDiv.querySelector(".row-text").value.trim();
+          const logic = rowDiv.querySelector(".row-logic").value;
+          espacenetRows.push({ field, operator, text, logic });
+        });
+    }
+
+    if (espacenetRows.length === 0 || espacenetRows.every((r) => !r.text)) {
+      alert("Please provide at least one Espacenet search term.");
+      return;
+    }
+
+    if (elEspacenetOptLang) {
+      state.espacenetOptions.query_lang = elEspacenetOptLang.value || "en";
+    }
+    state.espacenetOptions.rows = espacenetRows;
+    localStorage.setItem(
+      "espacenetOptions",
+      JSON.stringify(state.espacenetOptions),
+    );
+
+    let queryParts = [];
+    for (let i = 0; i < espacenetRows.length; i++) {
+      const r = espacenetRows[i];
+      if (!r.text) continue;
+      let textVal = r.text;
+      if (textVal.includes(" ") && !textVal.startsWith('"')) {
+        textVal = `"${textVal}"`;
+      }
+      let part = `${r.field} ${r.operator} ${textVal}`;
+      if (queryParts.length > 0) {
+        queryParts.push(`${r.logic} ${part}`);
+      } else {
+        queryParts.push(part);
+      }
+    }
+    keywords = queryParts.join(" ");
   } else {
-    // Collect rows from manual panel query builder
+    // Collect rows from manual panel query builder (India)
     if (elManualIndiaQueryRowsContainer) {
       elManualIndiaQueryRowsContainer
         .querySelectorAll(".india-query-row")
@@ -631,7 +717,6 @@ async function handleManualScrapeSubmit(e) {
     localStorage.setItem("indiaOptions", JSON.stringify(state.indiaOptions));
 
     // Construct human-readable combined query string
-    // Note: do NOT wrap text in extra quotes — the user may have already added their own
     let queryStr = "";
     for (let i = 0; i < indiaRows.length; i++) {
       if (!indiaRows[i].text) continue;
@@ -727,6 +812,7 @@ async function handleManualScrapeSubmit(e) {
         max_results: maxResults,
         sources: state.searchSources,
         india_options: state.indiaOptions,
+        espacenet_options: state.espacenetOptions,
         captcha_mode: state.captchaMode,
         captcha_service: state.captchaService,
       }),
@@ -2529,6 +2615,18 @@ function setupEventListeners() {
       updateSourceFieldsVisibility();
     });
   }
+  if (elBtnSourceEspacenet) {
+    elBtnSourceEspacenet.addEventListener("click", () => {
+      state.searchSources = ["espacenet"];
+      localStorage.setItem(
+        "searchSources",
+        JSON.stringify(state.searchSources),
+      );
+      syncSourceToggleButtons();
+      syncSourceCheckboxes();
+      updateSourceFieldsVisibility();
+    });
+  }
 
   // Manual Panel India Query builder row add/remove listeners
   if (elBtnManualIndiaAddRow && elManualIndiaQueryRowsContainer) {
@@ -2545,6 +2643,18 @@ function setupEventListeners() {
       } else {
         alert("At least one query row is required.");
       }
+    });
+  }
+
+  // Manual Panel Espacenet Query builder row listeners
+  if (elBtnManualEspacenetAddRow && elManualEspacenetQueryRowsContainer) {
+    elBtnManualEspacenetAddRow.addEventListener("click", () => {
+      addEspacenetRowToUi(elManualEspacenetQueryRowsContainer);
+    });
+  }
+  if (elBtnManualEspacenetReset) {
+    elBtnManualEspacenetReset.addEventListener("click", () => {
+      resetEspacenetQueryRows();
     });
   }
 
@@ -2962,4 +3072,166 @@ function getSelectedItemsToDelete() {
   });
 
   return { searchIds, patentIds, displayItems };
+}
+
+// ── Espacenet Query Builder Functions ─────────────────────────────────────────
+
+function initEspacenetOptions() {
+  const saved = JSON.parse(localStorage.getItem("espacenetOptions") || "null");
+  if (saved && typeof saved === "object") {
+    state.espacenetOptions = {
+      query_lang: saved.query_lang || "en",
+      rows:
+        Array.isArray(saved.rows) && saved.rows.length > 0
+          ? saved.rows
+          : [
+              { field: "TI", operator: "all", text: "", logic: "AND" },
+              { field: "TA", operator: "all", text: "", logic: "AND" },
+            ],
+    };
+  }
+}
+
+function addEspacenetRowToUi(
+  container,
+  field = "TI",
+  operator = "all",
+  text = "",
+  logic = "AND",
+) {
+  if (!container) return;
+  const rowDiv = document.createElement("div");
+  rowDiv.className = "espacenet-query-row";
+
+  // Field Select
+  const fieldSelect = document.createElement("select");
+  fieldSelect.className = "row-field";
+  for (const [key, info] of Object.entries(ESPACENET_SEARCH_FIELDS_MAP)) {
+    const opt = document.createElement("option");
+    opt.value = key;
+    opt.textContent = info.label;
+    if (key === field) opt.selected = true;
+    fieldSelect.appendChild(opt);
+  }
+
+  // Operator Select
+  const opSelect = document.createElement("select");
+  opSelect.className = "row-operator";
+  const operators = [
+    { val: "all", label: "all of" },
+    { val: "any", label: "any of" },
+    { val: "=", label: "equals" },
+  ];
+  operators.forEach((op) => {
+    const o = document.createElement("option");
+    o.value = op.val;
+    o.textContent = op.label;
+    if (op.val === operator) o.selected = true;
+    opSelect.appendChild(o);
+  });
+
+  // Input Text
+  const input = document.createElement("input");
+  input.type = "text";
+  input.className = "row-text";
+  input.value = text;
+  input.placeholder =
+    ESPACENET_SEARCH_FIELDS_MAP[field]?.placeholder || "Search term...";
+
+  // Logic Select
+  const logicSelect = document.createElement("select");
+  logicSelect.className = "row-logic";
+  ["AND", "OR", "NOT"].forEach((lg) => {
+    const o = document.createElement("option");
+    o.value = lg;
+    o.textContent = lg;
+    if (lg === logic) o.selected = true;
+    logicSelect.appendChild(o);
+  });
+
+  // Remove Button
+  const removeBtn = document.createElement("button");
+  removeBtn.type = "button";
+  removeBtn.className = "btn-remove-row";
+  removeBtn.title = "Remove row";
+  removeBtn.innerHTML = `
+    <svg class="icon-sm" viewBox="0 0 24 24" fill="none" style="width: 14px; height: 14px;">
+      <path d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+    </svg>
+  `;
+  removeBtn.addEventListener("click", () => {
+    const rows = container.querySelectorAll(".espacenet-query-row");
+    if (rows.length > 1) {
+      rowDiv.remove();
+    } else {
+      alert("At least one query row is required.");
+    }
+  });
+
+  // When Field changes, update Operator & Placeholder
+  fieldSelect.addEventListener("change", () => {
+    const selectedKey = fieldSelect.value;
+    const info = ESPACENET_SEARCH_FIELDS_MAP[selectedKey];
+    if (info) {
+      opSelect.value = info.defaultOperator;
+      input.placeholder = info.placeholder;
+    }
+    adjustSelectWidth(fieldSelect);
+  });
+
+  rowDiv.appendChild(fieldSelect);
+  rowDiv.appendChild(opSelect);
+  rowDiv.appendChild(input);
+  rowDiv.appendChild(logicSelect);
+  rowDiv.appendChild(removeBtn);
+
+  container.appendChild(rowDiv);
+  adjustSelectWidth(fieldSelect);
+}
+
+function renderManualEspacenetQueryRows() {
+  if (!elManualEspacenetQueryRowsContainer) return;
+  elManualEspacenetQueryRowsContainer.innerHTML = "";
+  const rows = state.espacenetOptions.rows || [];
+  if (rows.length === 0) {
+    addEspacenetRowToUi(
+      elManualEspacenetQueryRowsContainer,
+      "TI",
+      "all",
+      "",
+      "AND",
+    );
+    addEspacenetRowToUi(
+      elManualEspacenetQueryRowsContainer,
+      "TA",
+      "all",
+      "",
+      "AND",
+    );
+  } else {
+    rows.forEach((r) => {
+      addEspacenetRowToUi(
+        elManualEspacenetQueryRowsContainer,
+        r.field || "TI",
+        r.operator || "all",
+        r.text || "",
+        r.logic || "AND",
+      );
+    });
+  }
+  if (elEspacenetOptLang && state.espacenetOptions.query_lang) {
+    elEspacenetOptLang.value = state.espacenetOptions.query_lang;
+  }
+}
+
+function resetEspacenetQueryRows() {
+  state.espacenetOptions.rows = [
+    { field: "TI", operator: "all", text: "", logic: "AND" },
+    { field: "TA", operator: "all", text: "", logic: "AND" },
+  ];
+  localStorage.setItem(
+    "espacenetOptions",
+    JSON.stringify(state.espacenetOptions),
+  );
+  renderManualEspacenetQueryRows();
 }
