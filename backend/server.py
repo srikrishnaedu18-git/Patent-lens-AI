@@ -637,6 +637,7 @@ async def _manual_pipeline(
     india_options: dict,
     task_id: str,
     user_id: int,
+    espacenet_options: dict | None = None,
     captcha_mode: str = "auto",
     captcha_service: str = "2captcha",
 ):
@@ -706,6 +707,7 @@ async def _manual_pipeline(
                         progress_callback=_progress_sync,
                         sources=sources,
                         india_options=curr_india_options,
+                        espacenet_options=espacenet_options,
                         captcha_callback=lambda image, tid=task_id, cm=captcha_mode, cs=captcha_service: _request_captcha(tid, image, cm, cs),
                         is_cancelled_callback=lambda: _task_cancelled.get(task_id, False),
                     )
@@ -1102,6 +1104,7 @@ async def trigger_manual_scrape(req: ManualScrapeRequest, background_tasks: Back
         max_results=max_results,
         sources=sources,
         india_options=india_options,
+        espacenet_options=req.espacenet_options,
         task_id=task_id,
         user_id=user_id,
         captcha_mode=req.captcha_mode,

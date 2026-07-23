@@ -166,11 +166,24 @@ INDIA_DATE_FIELDS = {"APD", "PD", "PDG", "PRD"}
 INDIA_LOGIC_FIELDS = {"AND", "OR", "NOT"}
 
 
-async def _get_epo_ops_access_token(client: httpx.AsyncClient, key: str, secret: str) -> Optional[str]:
-    """Obtain OAuth 2.0 access token from EPO OPS API."""
+async def _get_epo_ops_access_token(
+    client: httpx.AsyncClient, key: str, secret: str, _log: Optional[Callable[[str], None]] = None
+) -> Optional[str]:
+    """Obtain OAuth 2.0 access token from EPO OPS API with step-by-step logging."""
+    def log(msg: str):
+        logger.info(msg)
+        if _log:
+            try:
+                _log(msg)
+            except Exception:
+                pass
+
     if not key or not secret:
+        log("[EPO OPS Auth] Consumer Key or Secret missing in .env environment variables.")
         return None
+
     try:
+        log("[EPO OPS Auth] Exchanging Consumer Key & Secret for OAuth 2.0 access token...")
         credentials = f"{key}:{secret}"
         encoded_credentials = base64.b64encode(credentials.encode("utf-8")).decode("utf-8")
         headers = {
@@ -181,16 +194,22 @@ async def _get_epo_ops_access_token(client: httpx.AsyncClient, key: str, secret:
             "https://ops.epo.org/3.2/auth/accesstoken",
             headers=headers,
             data={"grant_type": "client_credentials"},
-            timeout=10.0,
+            timeout=12.0,
         )
         if res.status_code == 200:
             data = res.json()
-            return data.get("access_token")
+            token = data.get("access_token")
+            if token:
+                log(f"[EPO OPS Auth] Token acquired successfully (expires in {data.get('expires_in', 1200)}s).")
+                return token
+            else:
+                log(f"[EPO OPS Auth ERROR] Response 200 but no access_token in payload: {data}")
+                return None
         else:
-            logger.warning("[EPO OPS] Authentication failed (%s): %s", res.status_code, res.text[:200])
+            log(f"[EPO OPS Auth ERROR] Authentication failed (HTTP {res.status_code}): {res.text[:300]}")
             return None
     except Exception as err:
-        logger.warning("[EPO OPS] Token request exception: %s", err)
+        log(f"[EPO OPS Auth ERROR] Exception requesting access token: {err}")
         return None
 
 
@@ -309,7 +328,7 @@ async def scrape_espacenet_patents(
     is_cancelled_callback: Optional[Callable[[], bool]] = None,
 ) -> list[dict]:
     """
-    Search EPO Espacenet patent portal using EPO Open Patent Services (OPS) API.
+    Search EPO Espacenet patent portal using EPO Open Patent Services (OPS) API with step-by-step error bounding.
     """
     def _log(msg: str):
         logger.info(msg)
@@ -319,49 +338,64 @@ async def scrape_espacenet_patents(
             except Exception as cb_err:
                 logger.debug("progress_callback error: %s", cb_err)
 
-    _log(f"Initializing Espacenet search for query: {query}")
+    _log(f"[Espacenet] Initializing search pipeline for query: '{query}'")
 
-    key = os.getenv("EPO_OPS_CONSUMER_KEY", "").strip()
-    secret = os.getenv("EPO_OPS_CONSUMER_SECRET", "").strip()
+    try:
+        key = os.getenv("EPO_OPS_CONSUMER_KEY", "").strip()
+        secret = os.getenv("EPO_OPS_CONSUMER_SECRET", "").strip()
 
-    cql_query = query.strip()
-    if not any(tag in cql_query for tag in ["=", "txt=", "ti=", "ab=", "pn=", "pa=", "in="]):
-        cql_query = f'txt="{cql_query}"'
+        _log(f"[Espacenet] Environment credentials check: Consumer Key configured? {'YES' if key else 'NO'}, Secret configured? {'YES' if secret else 'NO'}")
 
-    async with httpx.AsyncClient(timeout=25.0, follow_redirects=True) as client:
-        headers = {"Accept": "application/json"}
-        token = await _get_epo_ops_access_token(client, key, secret)
-        if token:
-            headers["Authorization"] = f"Bearer {token}"
-            _log("Authenticated with EPO OPS API credentials.")
-        else:
-            _log("Querying EPO OPS API (Public Mode)...")
+        cql_query = query.strip()
+        if not any(tag in cql_query.lower() for tag in ["=", "txt=", "ti=", "ab=", "pn=", "pa=", "in=", "cpc=", "ipc="]):
+            clean_text = cql_query.replace('"', '').strip()
+            cql_query = f'txt="{clean_text}"'
 
-        ops_url = f"https://ops.epo.org/rest-services/published-data/search?q={quote(cql_query)}&Range=1-{max_results}"
+        _log(f"[Espacenet] Final CQL query formatted: '{cql_query}'")
 
-        try:
+        async with httpx.AsyncClient(timeout=25.0, follow_redirects=True) as client:
+            headers = {"Accept": "application/json"}
+            token = await _get_epo_ops_access_token(client, key, secret, _log=_log)
+            if token:
+                headers["Authorization"] = f"Bearer {token}"
+            else:
+                _log("[Espacenet WARNING] Proceeding in unauthenticated public mode (may be subject to tighter rate limits).")
+
+            ops_url = f"https://ops.epo.org/rest-services/published-data/search?q={quote(cql_query)}&Range=1-{max_results}"
+            _log(f"[Espacenet] Sending REST search request to EPO OPS: {ops_url}")
+
             res = await client.get(ops_url, headers=headers)
+            _log(f"[Espacenet] Search request returned HTTP Status {res.status_code}")
+
             if res.status_code == 200:
-                _log("Received search response from EPO OPS API.")
                 raw_results = _parse_epo_ops_search_response(res.json(), max_results)
+                _log(f"[Espacenet] Search API parsed {len(raw_results)} patent document references.")
+
                 if raw_results:
-                    _log(f"Retrieved {len(raw_results)} patent IDs. Fetching titles & abstracts...")
                     epodoc_ids = [item.get("doc_key") or item["patent_id"] for item in raw_results if item.get("patent_id")]
                     if epodoc_ids:
                         batch_str = ",".join(epodoc_ids[:max_results])
                         biblio_url = f"https://ops.epo.org/rest-services/published-data/publication/epodoc/{batch_str}/biblio,abstract"
+                        _log(f"[Espacenet] Requesting bibliographic details & abstracts for {len(epodoc_ids)} patents...")
                         bib_res = await client.get(biblio_url, headers=headers)
+                        _log(f"[Espacenet] Biblio request returned HTTP Status {bib_res.status_code}")
                         if bib_res.status_code == 200:
                             raw_results = _enrich_epo_ops_results(raw_results, bib_res.json())
+                            _log("[Espacenet] Full titles and abstracts successfully merged.")
+                        else:
+                            _log(f"[Espacenet WARNING] Biblio enrichment failed (HTTP {bib_res.status_code}): {bib_res.text[:200]}")
 
-                    _log(f"Successfully processed {len(raw_results)} Espacenet patents.")
+                    _log(f"[Espacenet SUCCESS] Scraped {len(raw_results)} patents from Espacenet.")
                     return raw_results
+                else:
+                    _log("[Espacenet] No matching patents found for this query.")
             else:
-                _log(f"EPO OPS API returned HTTP status {res.status_code}.")
-        except Exception as req_err:
-            _log(f"EPO OPS API request failed: {req_err}")
+                _log(f"[Espacenet ERROR] EPO OPS API returned non-200 status code ({res.status_code}): {res.text[:300]}")
+    except Exception as exc:
+        _log(f"[Espacenet CRITICAL EXCEPTION] Scrape process encountered error: {exc}")
+        logger.exception("[Espacenet CRITICAL EXCEPTION]")
 
-    _log("Espacenet search completed.")
+    _log("[Espacenet] Scrape pipeline completed.")
     return []
 
 

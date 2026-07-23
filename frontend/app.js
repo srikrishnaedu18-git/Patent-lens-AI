@@ -682,11 +682,14 @@ async function handleManualScrapeSubmit(e) {
     for (let i = 0; i < espacenetRows.length; i++) {
       const r = espacenetRows[i];
       if (!r.text) continue;
-      let textVal = r.text;
-      if (textVal.includes(" ") && !textVal.startsWith('"')) {
-        textVal = `"${textVal}"`;
+      let textVal = r.text.replace(/"/g, "").trim();
+      const f = (r.field || "txt").toLowerCase();
+      let part = "";
+      if (f === "ta") {
+        part = `(ti="${textVal}" or ab="${textVal}")`;
+      } else {
+        part = `${f}="${textVal}"`;
       }
-      let part = `${r.field} ${r.operator} ${textVal}`;
       if (queryParts.length > 0) {
         queryParts.push(`${r.logic} ${part}`);
       } else {
