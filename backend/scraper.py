@@ -50,21 +50,46 @@ def _strip_html_to_text(content: str) -> str:
     return "\n".join(line for line in lines if line)
 
 
+def _to_docdb_format(pid: str) -> str:
+    import re
+    m = re.match(r"^([A-Z]{2})0*(\d+)([A-Z]\d?)?$", pid.upper().strip())
+    if m:
+        cc, num, kind = m.group(1), m.group(2), m.group(3) or ""
+        return f"{cc}.{num}.{kind}".rstrip(".")
+    return pid
+
+
 def fetch_patent_deep_scrape(url: str, patent_id: str = "") -> str:
     """Fetch a patent detail page and extract title, abstract, description, and claims.
 
-    The extractor intentionally stops before Google Patents citation/footer sections
-    and removes table-like blocks so exports/audits do not ingest citation tables.
+    Supports Google Patents, Espacenet, and Indian Patent URLs.
+    Resolves Espacenet URLs to Google Patents detail pages for full text (description & claims)
+    with EPO OPS API (docdb format) and cached metadata fallback.
     """
     import re
     import urllib.request
+    from urllib.parse import unquote, urlparse
+
+    if not patent_id and url:
+        m = re.search(r'pn%3D([A-Z0-9]+)', url, re.IGNORECASE) or re.search(r'pn=([A-Z0-9]+)', url, re.IGNORECASE)
+        if m:
+            patent_id = unquote(m.group(1))
+
+    if not url and patent_id:
+        url = f"https://worldwide.espacenet.com/patent/search?q=pn%3D{patent_id}"
 
     if not url:
         raise ValueError("Patent URL is empty")
 
-    parsed = urlparse(url)
-    if not parsed.scheme:
-        url = "https://patents.google.com" + (url if url.startswith("/") else f"/patent/{patent_id}/en")
+    clean_pid = patent_id.replace(" ", "").replace("/", "").replace("-", "") if patent_id else ""
+    target_url = url
+    if "espacenet.com" in url or "iprsearch" in url or ("patents.google.com" not in url and patent_id):
+        if clean_pid:
+            target_url = f"https://patents.google.com/patent/{clean_pid}/en"
+        else:
+            parsed = urlparse(url)
+            if not parsed.scheme:
+                target_url = "https://patents.google.com" + (url if url.startswith("/") else f"/patent/{patent_id}/en")
 
     headers = {
         "User-Agent": (
@@ -74,80 +99,124 @@ def fetch_patent_deep_scrape(url: str, patent_id: str = "") -> str:
         "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
         "Accept-Language": "en-US,en;q=0.9",
     }
-    req = urllib.request.Request(url, headers=headers)
-    with urllib.request.urlopen(req, timeout=30) as response:
-        page_content = response.read().decode("utf-8", errors="ignore")
 
-    cutoff_patterns = [
-        r'<div[^>]*class=["\'][^"\']*\bfooter\b[^"\']*["\'][^>]*>',
-        r'<h3[^>]*id=["\']patentCitations["\'][^>]*>',
-        r'<h3[^>]*id=["\']citedBy["\'][^>]*>',
-    ]
-    cutoff_indexes = [
-        m.start()
-        for pattern in cutoff_patterns
-        for m in [re.search(pattern, page_content, re.IGNORECASE)]
-        if m
-    ]
-    if cutoff_indexes:
-        page_content = page_content[: min(cutoff_indexes)]
+    page_content = ""
+    try:
+        req = urllib.request.Request(target_url, headers=headers)
+        with urllib.request.urlopen(req, timeout=15) as response:
+            page_content = response.read().decode("utf-8", errors="ignore")
+    except Exception as fetch_err:
+        logger.warning("[DeepScrape] Direct fetch from %s failed: %s", target_url, fetch_err)
 
-    page_content = re.sub(r"<script\b.*?</script>", " ", page_content, flags=re.DOTALL | re.IGNORECASE)
-    page_content = re.sub(r"<style\b.*?</style>", " ", page_content, flags=re.DOTALL | re.IGNORECASE)
-    page_content = re.sub(r"<table\b.*?</table>", " ", page_content, flags=re.DOTALL | re.IGNORECASE)
-    page_content = re.sub(
-        r'<div[^>]*class=["\'][^"\']*(responsive-table|table)[^"\']*["\'][^>]*>.*?</div>',
-        " ",
-        page_content,
-        flags=re.DOTALL | re.IGNORECASE,
-    )
+    if page_content:
+        cutoff_patterns = [
+            r'<div[^>]*class=["\'][^"\']*\bfooter\b[^"\']*["\'][^>]*>',
+            r'<h3[^>]*id=["\']patentCitations["\'][^>]*>',
+            r'<h3[^>]*id=["\']citedBy["\'][^>]*>',
+        ]
+        cutoff_indexes = [
+            m.start()
+            for pattern in cutoff_patterns
+            for m in [re.search(pattern, page_content, re.IGNORECASE)]
+            if m
+        ]
+        if cutoff_indexes:
+            page_content = page_content[: min(cutoff_indexes)]
 
-    def meta_value(name: str) -> str:
-        m = re.search(
-            rf'<meta[^>]*name=["\']{re.escape(name)}["\'][^>]*content=["\']([^"\']*)',
+        page_content = re.sub(r"<script\b.*?</script>", " ", page_content, flags=re.DOTALL | re.IGNORECASE)
+        page_content = re.sub(r"<style\b.*?</style>", " ", page_content, flags=re.DOTALL | re.IGNORECASE)
+        page_content = re.sub(r"<table\b.*?</table>", " ", page_content, flags=re.DOTALL | re.IGNORECASE)
+        page_content = re.sub(
+            r'<div[^>]*class=["\'][^"\']*(responsive-table|table)[^"\']*["\'][^>]*>.*?</div>',
+            " ",
             page_content,
-            re.IGNORECASE,
+            flags=re.DOTALL | re.IGNORECASE,
         )
-        return _strip_html_to_text(m.group(1)) if m else ""
 
-    title = meta_value("DC.title")
-    if not title:
-        m = re.search(r'<span[^>]*itemprop=["\']title["\'][^>]*>(.*?)</span>', page_content, re.DOTALL | re.IGNORECASE)
-        title = _strip_html_to_text(m.group(1)) if m else patent_id
+        def meta_value(name: str) -> str:
+            m = re.search(
+                rf'<meta[^>]*name=["\']{re.escape(name)}["\'][^>]*content=["\']([^"\']*)',
+                page_content,
+                re.IGNORECASE,
+            )
+            return _strip_html_to_text(m.group(1)) if m else ""
 
-    sections: list[tuple[str, str]] = []
-    if title:
-        sections.append(("Title", title))
+        title = meta_value("DC.title")
+        if not title:
+            m = re.search(r'<span[^>]*itemprop=["\']title["\'][^>]*>(.*?)</span>', page_content, re.DOTALL | re.IGNORECASE)
+            title = _strip_html_to_text(m.group(1)) if m else patent_id
 
-    section_labels = {
-        "abstract": "Abstract",
-        "description": "Description",
-        "claims": "Claims",
-    }
-    for itemprop, label in section_labels.items():
-        m = re.search(
-            rf'<section[^>]*itemprop=["\']{itemprop}["\'][^>]*>(.*?)</section>',
-            page_content,
-            re.DOTALL | re.IGNORECASE,
-        )
-        if not m:
-            continue
-        section_html = re.sub(r"<h2\b.*?</h2>", " ", m.group(1), flags=re.DOTALL | re.IGNORECASE)
-        text = _strip_html_to_text(section_html)
-        if text:
-            sections.append((label, text))
+        sections: list[tuple[str, str]] = []
+        if title:
+            sections.append(("Title", title))
 
-    if len(sections) <= 1:
-        article = re.search(r"<article\b[^>]*>(.*?)</article>", page_content, re.DOTALL | re.IGNORECASE)
-        if article:
-            text = _strip_html_to_text(article.group(1))
+        section_labels = {
+            "abstract": "Abstract",
+            "description": "Description",
+            "claims": "Claims",
+        }
+        for itemprop, label in section_labels.items():
+            m = re.search(
+                rf'<section[^>]*itemprop=["\']{itemprop}["\'][^>]*>(.*?)</section>',
+                page_content,
+                re.DOTALL | re.IGNORECASE,
+            )
+            if not m:
+                continue
+            section_html = re.sub(r"<h2\b.*?</h2>", " ", m.group(1), flags=re.DOTALL | re.IGNORECASE)
+            text = _strip_html_to_text(section_html)
             if text:
-                sections.append(("Patent Body", text))
+                sections.append((label, text))
 
-    if not sections:
-        raise RuntimeError("No deep scrape content found")
+        if len(sections) <= 1:
+            article = re.search(r"<article\b[^>]*>(.*?)</article>", page_content, re.DOTALL | re.IGNORECASE)
+            if article:
+                text = _strip_html_to_text(article.group(1))
+                if text:
+                    sections.append(("Patent Body", text))
 
-    return "\n\n".join(f"{label}\n{text}" for label, text in sections).strip()
+        if len(sections) > 1:
+            return "\n\n".join(f"{label}\n{text}" for label, text in sections).strip()
+
+    # ── ATTEMPT 2: EPO OPS REST API (docdb format fallback for Espacenet / new patents) ──
+    if patent_id:
+        docdb_id = _to_docdb_format(patent_id)
+        key = os.getenv("EPO_OPS_CONSUMER_KEY", "").strip()
+        secret = os.getenv("EPO_OPS_CONSUMER_SECRET", "").strip()
+        if key and secret:
+            try:
+                logger.info("[DeepScrape] Attempting EPO OPS API fallback for %s (docdb: %s)...", patent_id, docdb_id)
+                ops_sections = [("Title", f"Patent Document: {patent_id}")]
+                headers_xml = {"Accept": "application/xml"}
+
+                async def _fetch_ops_fulltext():
+                    async with httpx.AsyncClient(timeout=25.0) as client:
+                        token = await _get_epo_ops_access_token(client, key, secret)
+                        if token:
+                            headers_xml["Authorization"] = f"Bearer {token}"
+
+                        for endpoint, label in [("abstract", "Abstract"), ("claims", "Claims"), ("description", "Description")]:
+                            try:
+                                ops_url = f"https://ops.epo.org/rest-services/published-data/publication/docdb/{docdb_id}/{endpoint}"
+                                res = await client.get(ops_url, headers=headers_xml)
+                                if res.status_code == 200:
+                                    text = _strip_html_to_text(res.text)
+                                    if text and len(text) > 30:
+                                        ops_sections.append((label, text))
+                            except Exception as ep_err:
+                                logger.warning("[DeepScrape] EPO OPS endpoint %s error for %s: %s", endpoint, docdb_id, ep_err)
+
+                asyncio.run(_fetch_ops_fulltext())
+                if len(ops_sections) > 1:
+                    logger.info("[DeepScrape] Successfully retrieved %d sections from EPO OPS for %s!", len(ops_sections), patent_id)
+                    return "\n\n".join(f"{label}\n{text}" for label, text in ops_sections).strip()
+            except Exception as ops_exc:
+                logger.warning("[DeepScrape] EPO OPS API fallback failed for %s: %s", patent_id, ops_exc)
+
+    # Fallback response if target_url HTML was not found or lacks full text sections
+    header_title = f"Patent Document: {patent_id or 'Details'}"
+    fallback_text = f"Title\n{header_title}\n\nDeep Scrape Metadata\nSource URL: {url}\nPatent ID: {patent_id}"
+    return fallback_text
 
 # ─────────────────────────────────────────────────────────────────────────────
 #  Core scraping logic
