@@ -59,6 +59,179 @@ def _to_docdb_format(pid: str) -> str:
     return pid
 
 
+def parse_india_patent_details_html(html: str, patent_id: str = "") -> str:
+    """Parse an Indian Patent Details HTML page into clean sectioned markdown-like text."""
+    if not html:
+        return ""
+
+    import re
+    sections = []
+    meta_dict = {}
+
+    try:
+        from bs4 import BeautifulSoup
+        soup = BeautifulSoup(html, "html.parser")
+
+        # 1. Extract metadata table
+        for tr in soup.find_all("tr"):
+            tds = tr.find_all("td")
+            if len(tds) == 2:
+                k = tds[0].get_text(strip=True)
+                v = tds[1].get_text(strip=True)
+                if k and v:
+                    meta_dict[k] = v
+
+        title = meta_dict.get("Invention Title", "")
+        if title:
+            sections.append(("Title", title))
+
+        info_lines = []
+        for k in [
+            "Publication Number",
+            "Publication Date",
+            "Publication Type",
+            "Application Number",
+            "Application Filing Date",
+            "Field Of Invention",
+            "Classification (IPC)",
+            "Priority Number",
+            "Priority Country",
+            "Priority Date",
+        ]:
+            if k in meta_dict and meta_dict[k]:
+                info_lines.append(f"{k}: {meta_dict[k]}")
+        if info_lines:
+            sections.append(("Patent Metadata", "\n".join(info_lines)))
+
+        # 2. Extract Inventors & Applicants
+        for section_name in ["Inventor", "Applicant"]:
+            sec_header = soup.find(lambda tag: tag.name == "td" and tag.get_text(strip=True).lower() == section_name.lower())
+            if sec_header:
+                parent_tr = sec_header.find_parent("tr")
+                if parent_tr:
+                    next_tr = parent_tr.find_next_sibling("tr")
+                    if next_tr:
+                        table = next_tr.find("table")
+                        if table:
+                            people = []
+                            rows = table.find_all("tr")[1:]  # Skip header row
+                            for r in rows:
+                                cols = [c.get_text(strip=True) for c in r.find_all(["td", "th"])]
+                                if cols and any(cols):
+                                    people.append(" - " + ", ".join(filter(None, cols)))
+                            if people:
+                                sections.append((f"{section_name}s", "\n".join(people)))
+
+        # 3. Extract Abstract
+        abstract_td = soup.find(lambda tag: tag.name == "td" and "Abstract:" in tag.get_text())
+        if abstract_td:
+            abs_text = abstract_td.get_text(separator="\n", strip=True)
+            abs_text = re.sub(r"^Abstract:\s*", "", abs_text, flags=re.IGNORECASE).strip()
+            if abs_text:
+                sections.append(("Abstract", abs_text))
+
+        # 4. Extract Complete Specification / Textarea
+        comp_spec = soup.find("textarea", id="COMPLETE_SPECIFICATION") or soup.find("textarea", class_="Complete-Specification")
+        if comp_spec:
+            spec_text = comp_spec.get_text(strip=True)
+            if spec_text:
+                sections.append(("Description & Complete Specification", spec_text))
+
+    except Exception as parse_err:
+        logger.warning("[DeepScrape] bs4 parsing error for Indian patent HTML: %s. Using regex/stdlib fallback.", parse_err)
+
+    if not sections:
+        # Standard Library Fallback (Regex & HTMLParser)
+        spec_match = re.search(r'<textarea[^>]*id=["\']COMPLETE_SPECIFICATION["\'][^>]*>(.*?)</textarea>', html, re.DOTALL | re.IGNORECASE)
+        if not spec_match:
+            spec_match = re.search(r'<textarea[^>]*class=["\']Complete-Specification["\'][^>]*>(.*?)</textarea>', html, re.DOTALL | re.IGNORECASE)
+        
+        comp_spec_text = spec_match.group(1).strip() if spec_match else ""
+
+        title_m = re.search(r'<td[^>]*>\s*Invention Title\s*</td>\s*<td[^>]*>(.*?)</td>', html, re.DOTALL | re.IGNORECASE)
+        if title_m:
+            title_text = re.sub(r'<[^>]+>', '', title_m.group(1)).strip()
+            if title_text:
+                sections.append(("Title", title_text))
+
+        abs_m = re.search(r'<td[^>]*>\s*<strong>\s*Abstract:\s*</strong><br>(.*?)</td>', html, re.DOTALL | re.IGNORECASE)
+        if abs_m:
+            abs_text = re.sub(r'<[^>]+>', '', abs_m.group(1)).strip()
+            if abs_text:
+                sections.append(("Abstract", abs_text))
+
+        if comp_spec_text:
+            sections.append(("Description & Complete Specification", comp_spec_text))
+
+    if sections:
+        return "\n\n".join(f"{label}\n{text}" for label, text in sections).strip()
+
+    return ""
+
+
+def _fetch_india_patent_deep_scrape(url: str, patent_id: str = "") -> str:
+    """Fetch complete Indian patent details directly from IP India using ApplicationNumber."""
+    import urllib.request
+    import urllib.parse
+    import ssl
+    import re
+
+    candidates = []
+    if patent_id:
+        clean_pid = patent_id.strip()
+        candidates.extend(re.findall(r'\b\d{10,14}\b', clean_pid))
+        no_in = re.sub(r'^(IN|in)[-_\s]*', '', clean_pid)
+        candidates.extend(re.findall(r'\d{10,14}', no_in))
+        raw_digits = re.sub(r'\D', '', clean_pid)
+        if 10 <= len(raw_digits) <= 14:
+            candidates.append(raw_digits)
+
+    if url:
+        candidates.extend(re.findall(r'\d{10,14}', url))
+
+    seen = set()
+    unique_candidates = []
+    for c in candidates:
+        if c not in seen:
+            seen.add(c)
+            unique_candidates.append(c)
+
+    ctx = ssl.create_default_context()
+    ctx.check_hostname = False
+    ctx.verify_mode = ssl.CERT_NONE
+
+    headers = {
+        "User-Agent": (
+            "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
+            "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+        ),
+        "Content-Type": "application/x-www-form-urlencoded",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+    }
+
+    endpoint = f"{INDIA_PATENTS_BASE}/PublicSearch/PublicationSearch/PatentDetails"
+
+    for app_no in unique_candidates:
+        try:
+            logger.info("[DeepScrape] Direct POST to IP India for ApplicationNumber: %s", app_no)
+            post_data = urllib.parse.urlencode({
+                "ApplicationNumber": app_no,
+                "ConnectionName": "PublicationConnection"
+            }).encode("utf-8")
+
+            req = urllib.request.Request(endpoint, data=post_data, headers=headers)
+            with urllib.request.urlopen(req, context=ctx, timeout=20) as resp:
+                html = resp.read().decode("utf-8", errors="ignore")
+                parsed_text = parse_india_patent_details_html(html, patent_id or app_no)
+                if parsed_text and len(parsed_text.strip()) > 50:
+                    logger.info("[DeepScrape] Successfully retrieved Indian patent details for %s (%d chars)", app_no, len(parsed_text))
+                    return parsed_text
+        except Exception as err:
+            logger.warning("[DeepScrape] Direct fetch to IP India failed for %s: %s", app_no, err)
+
+    return ""
+
+
 def fetch_patent_deep_scrape(url: str, patent_id: str = "") -> str:
     """Fetch a patent detail page and extract title, abstract, description, and claims.
 
@@ -69,6 +242,17 @@ def fetch_patent_deep_scrape(url: str, patent_id: str = "") -> str:
     import re
     import urllib.request
     from urllib.parse import unquote, urlparse
+
+    is_india = (
+        "iprsearch" in url.lower()
+        or "ipindia" in url.lower()
+        or (patent_id and (patent_id.upper().startswith("IN") or bool(re.search(r'\b\d{10,14}\b', patent_id))))
+    )
+
+    if is_india:
+        india_text = _fetch_india_patent_deep_scrape(url, patent_id)
+        if india_text and len(india_text.strip()) > 50:
+            return india_text
 
     if not patent_id and url:
         m = re.search(r'pn%3D([A-Z0-9]+)', url, re.IGNORECASE) or re.search(r'pn=([A-Z0-9]+)', url, re.IGNORECASE)
