@@ -112,7 +112,7 @@ def auth_register(user: UserAuth, response: Response):
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         logger.error("[Auth] register error: %s", e, exc_info=True)
-        raise HTTPException(status_code=500, detail="Registration failed")
+        raise HTTPException(status_code=500, detail=f"Registration failed: {str(e)}")
 
 @app.post("/api/auth/login")
 def auth_login(user: UserAuth, response: Response):
@@ -135,7 +135,7 @@ def auth_login(user: UserAuth, response: Response):
         return {"status": "success", "username": user_data["username"]}
     except Exception as e:
         logger.error("[Auth] login error: %s", e, exc_info=True)
-        raise HTTPException(status_code=500, detail="Login failed")
+        raise HTTPException(status_code=500, detail=f"Login failed: {str(e)}")
 
 @app.post("/api/auth/logout")
 def auth_logout(response: Response, session_token: str = Cookie(None)):

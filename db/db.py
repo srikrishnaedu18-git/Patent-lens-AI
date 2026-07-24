@@ -224,31 +224,38 @@ def register_user(username: str, password: str) -> int:
             (username, pwd_hash),
         )
         conn.commit()
-        logger.info("[DB] Registered user: id=%d username='%s'", user_id, username)
+        logger.info("[DB] Registered user: id=%s username='%s'", str(user_id), username)
         return user_id
     except (sqlite3.IntegrityError, psycopg2.IntegrityError):
+        conn.rollback()
         raise ValueError("Username already exists")
+    except Exception as e:
+        conn.rollback()
+        logger.error("[DB] Exception in register_user: %s", e, exc_info=True)
+        raise
     finally:
         conn.close()
 
 def verify_user(username: str, password: str) -> dict:
     conn = get_db_connection()
     cursor = conn.cursor()
-    pwd_hash = hash_password(password)
-    # Strictly case-sensitive username and password matching
-    query = (
-        "SELECT id, username FROM users WHERE username = %s AND password_hash = %s;"
-        if get_database_backend() == "postgres"
-        else "SELECT id, username FROM users WHERE username = ? COLLATE BINARY AND password_hash = ?;"
-    )
-    cursor.execute(query, (username, pwd_hash))
-    row = cursor.fetchone()
-    conn.close()
-    if row:
-        user_dict = dict(row)
-        if user_dict["username"] == username:
-            return user_dict
-    return None
+    try:
+        pwd_hash = hash_password(password)
+        # Strictly case-sensitive username and password matching
+        query = (
+            "SELECT id, username FROM users WHERE username = %s AND password_hash = %s;"
+            if get_database_backend() == "postgres"
+            else "SELECT id, username FROM users WHERE username = ? COLLATE BINARY AND password_hash = ?;"
+        )
+        cursor.execute(query, (username, pwd_hash))
+        row = cursor.fetchone()
+        if row:
+            user_dict = dict(row)
+            if user_dict["username"] == username:
+                return user_dict
+        return None
+    finally:
+        conn.close()
 
 def create_session(user_id: int) -> str:
     session_id = secrets.token_hex(32)
@@ -261,6 +268,10 @@ def create_session(user_id: int) -> str:
         )
         conn.commit()
         return session_id
+    except Exception as e:
+        conn.rollback()
+        logger.error("[DB] Exception in create_session: %s", e, exc_info=True)
+        raise
     finally:
         conn.close()
 
