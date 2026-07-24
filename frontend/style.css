@@ -1833,18 +1833,19 @@ button.stage-pill#pill-auditing:hover {
 
 .btn-deep-scrape-global {
   font-family: var(--font-family);
-  font-size: 0.82rem;
+  font-size: 0.8rem;
   font-weight: 700;
   color: var(--text-primary);
-  background: var(--bg-secondary);
+  background-color: transparent;
   border: 1px solid var(--border-color);
-  border-radius: var(--radius-sm);
-  padding: 9px 16px;
+  border-radius: var(--radius-md);
+  padding: 8px 16px;
   cursor: pointer;
-  transition: transform var(--transition-fast), border-color var(--transition-fast), color var(--transition-fast);
+  transition: all var(--transition-fast);
 }
 
 .btn-deep-scrape-global:hover:not(:disabled) {
+  background-color: var(--accent-bg);
   border-color: var(--accent);
   color: var(--accent);
   transform: translateY(-1px);
@@ -2876,12 +2877,20 @@ body.light-theme .user-profile-section {
   transition: all var(--transition-fast);
 }
 
-.btn-search-toggle:hover,
-.btn-filter:hover {
+.btn-search-toggle:hover:not(.active),
+.btn-filter:hover:not(.active),
+.btn-export-global:hover:not(:disabled) {
   background-color: var(--accent-bg);
   border-color: var(--accent);
-  color: var(--text-primary);
-  transform: none;
+  color: var(--accent);
+  transform: translateY(-1px);
+}
+
+.btn-search-toggle:hover:not(.active) svg,
+.btn-filter:hover:not(.active) svg,
+.btn-export-global:hover:not(:disabled) svg {
+  stroke: var(--accent);
+  color: var(--accent);
 }
 
 .btn-search-toggle.active {
