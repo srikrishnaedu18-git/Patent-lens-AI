@@ -715,6 +715,7 @@ async function handleManualScrapeSubmit(e) {
 
     for (let sIdx = 0; sIdx < enabledSources.length; sIdx++) {
       const src = enabledSources[sIdx];
+      initStagePillsForFlow("manual_scrape");
       writeLogLine(`\n🌐 [Step ${sIdx + 1}/${enabledSources.length}] Launching ${src.toUpperCase()} scraper...`, "info");
 
       let payload = {
@@ -728,11 +729,10 @@ async function handleManualScrapeSubmit(e) {
       if (src === "google") {
         payload.keywords = keywords;
       } else if (src === "india") {
-        payload.keywords = `CS: ${keywords}`;
-        payload.india_options = { rows: [{ field: "CS", text: keywords, logic: "AND" }] };
+        payload.keywords = keywords;
+        payload.india_options = { rows: [{ field: "CSP", text: keywords, logic: "AND" }] };
       } else if (src === "espacenet") {
-        const cleanKw = keywords.replace(/"/g, "").trim();
-        payload.keywords = `(ti="${cleanKw}" or ab="${cleanKw}")`;
+        payload.keywords = keywords;
         payload.espacenet_options = {
           query_lang: (elEspacenetOptLang ? elEspacenetOptLang.value : "en") || "en",
           rows: [{ field: "TA", operator: "all", text: keywords, logic: "AND" }]
@@ -1199,6 +1199,7 @@ function initStagePillsForFlow(flowName) {
 function startSSEStream(taskId, onComplete = null) {
   state.activeTaskId = taskId;
   state.activeStreamOnComplete = onComplete;
+  initStagePillsForFlow(state.activeFlow || "manual_scrape");
   const eventSource = new EventSource(`/api/ai/stream/${taskId}`);
   state.activeEventSource = eventSource;
 
