@@ -385,7 +385,77 @@ def create_search(
         raise PermissionError("Access denied")
     conn = get_db_connection()
     cursor = conn.cursor()
+    ph = sql_placeholder()
     try:
+        query_clean = query.strip()
+        base_kw = query_clean.split(" [")[0].strip().lower()
+
+        if search_mode != "failed":
+            # 1. Delete any old failed search entries for this query in this project
+            cursor.execute(
+                f"SELECT id, query FROM searches WHERE project_id = {ph} AND search_mode = 'failed';",
+                (project_id,),
+            )
+            failed_rows = cursor.fetchall()
+            for f_row in failed_rows:
+                f_query = (f_row["query"] if isinstance(f_row, dict) else f_row[1]).strip().lower()
+                f_base = f_query.split(" [")[0].strip().lower()
+                if f_base == base_kw or f_query == query_clean.lower():
+                    f_id = f_row["id"] if isinstance(f_row, dict) else f_row[0]
+                    cursor.execute(f"DELETE FROM searches WHERE id = {ph};", (f_id,))
+
+            # 2. Check if a search row for this query already exists
+            cursor.execute(
+                f"SELECT id FROM searches WHERE project_id = {ph} AND LOWER(query) = LOWER({ph});",
+                (project_id, query_clean),
+            )
+            existing = cursor.fetchone()
+            if existing:
+                existing_id = existing["id"] if isinstance(existing, dict) else existing[0]
+                cursor.execute(
+                    f"""
+                    UPDATE searches
+                    SET created_at = CURRENT_TIMESTAMP, search_mode = {ph},
+                        ai_queries = {ph}, ai_cpc_codes = {ph}, ai_rationale = {ph}
+                    WHERE id = {ph};
+                    """,
+                    (
+                        search_mode,
+                        json.dumps(ai_queries) if ai_queries else None,
+                        json.dumps(ai_cpc_codes) if ai_cpc_codes else None,
+                        ai_rationale,
+                        existing_id,
+                    ),
+                )
+                conn.commit()
+                logger.info("[DB] Updated search timestamp id=%d for query '%s'", existing_id, query_clean)
+                return existing_id
+
+        else:
+            # If search_mode == 'failed', check if a successful search already exists
+            cursor.execute(
+                f"SELECT id FROM searches WHERE project_id = {ph} AND LOWER(query) = LOWER({ph}) AND search_mode != 'failed';",
+                (project_id, query_clean),
+            )
+            existing_succ = cursor.fetchone()
+            if existing_succ:
+                conn.close()
+                return existing_succ["id"] if isinstance(existing_succ, dict) else existing_succ[0]
+
+            cursor.execute(
+                f"SELECT id FROM searches WHERE project_id = {ph} AND LOWER(query) = LOWER({ph}) AND search_mode = 'failed';",
+                (project_id, query_clean),
+            )
+            existing_fail = cursor.fetchone()
+            if existing_fail:
+                existing_id = existing_fail["id"] if isinstance(existing_fail, dict) else existing_fail[0]
+                cursor.execute(
+                    f"UPDATE searches SET created_at = CURRENT_TIMESTAMP WHERE id = {ph};",
+                    (existing_id,),
+                )
+                conn.commit()
+                return existing_id
+
         search_id = insert_and_get_id(
             cursor,
             """
@@ -399,7 +469,7 @@ def create_search(
             """,
             (
                 project_id,
-                query,
+                query_clean,
                 search_mode,
                 json.dumps(ai_queries) if ai_queries else None,
                 json.dumps(ai_cpc_codes) if ai_cpc_codes else None,

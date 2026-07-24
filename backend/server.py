@@ -1045,6 +1045,16 @@ async def trigger_manual_scrape(req: ManualScrapeRequest, background_tasks: Back
                 has_india_commas = True
                 break
 
+    espacenet_options = req.espacenet_options or {}
+    is_espacenet_active = "espacenet" in sources
+    has_espacenet_commas = False
+    if is_espacenet_active and espacenet_options and "rows" in espacenet_options:
+        for row in espacenet_options["rows"]:
+            text_val = (row.get("text") or "").strip()
+            if "," in text_val:
+                has_espacenet_commas = True
+                break
+
     if is_india_active and has_india_commas:
         # Split by India query rows
         split_rows = []
@@ -1067,7 +1077,6 @@ async def trigger_manual_scrape(req: ManualScrapeRequest, background_tasks: Back
                     "logic": row.get("logic", "AND")
                 })
             
-            # Construct combined keyword string for backend tracking and card title
             parts = []
             for idx, row in enumerate(new_rows):
                 if not row["text"]:
@@ -1088,6 +1097,50 @@ async def trigger_manual_scrape(req: ManualScrapeRequest, background_tasks: Back
             india_options_list.append(run_opt)
         
         india_options = india_options_list
+
+    elif is_espacenet_active and has_espacenet_commas:
+        # Split by Espacenet query rows
+        split_rows = []
+        for row in espacenet_options["rows"]:
+            text_val = (row.get("text") or "").strip()
+            terms = [t.strip() for t in text_val.split(",") if t.strip()]
+            split_rows.append(terms)
+        
+        max_terms = max(len(terms) for terms in split_rows) if split_rows else 0
+        keywords_list = []
+        espacenet_options_list = []
+        for i in range(max_terms):
+            new_rows = []
+            for idx, row in enumerate(espacenet_options["rows"]):
+                terms = split_rows[idx]
+                term = terms[i] if i < len(terms) else (terms[-1] if terms else "")
+                new_rows.append({
+                    "field": row.get("field", "TA"),
+                    "operator": row.get("operator", "all"),
+                    "text": term,
+                    "logic": row.get("logic", "AND")
+                })
+            
+            parts = []
+            for idx, row in enumerate(new_rows):
+                if not row["text"]:
+                    continue
+                text_val = row["text"]
+                if " " in text_val or " AND " in text_val.upper() or " OR " in text_val.upper():
+                    text_val = f"({text_val})"
+                part = f"{row['field']}: {text_val}"
+                if idx > 0:
+                    parts.append(f"{new_rows[idx-1]['logic']} {part}")
+                else:
+                    parts.append(part)
+            combined_kw = " ".join(parts)
+            
+            keywords_list.append(combined_kw)
+            run_opt = espacenet_options.copy()
+            run_opt["rows"] = new_rows
+            espacenet_options_list.append(run_opt)
+        
+        espacenet_options = espacenet_options_list
     else:
         # Standard splitting by comma in the raw_keywords input
         keywords_list = [k.strip() for k in raw_keywords.split(",") if k.strip()]
@@ -1104,7 +1157,7 @@ async def trigger_manual_scrape(req: ManualScrapeRequest, background_tasks: Back
         max_results=max_results,
         sources=sources,
         india_options=india_options,
-        espacenet_options=req.espacenet_options,
+        espacenet_options=espacenet_options,
         task_id=task_id,
         user_id=user_id,
         captcha_mode=req.captcha_mode,

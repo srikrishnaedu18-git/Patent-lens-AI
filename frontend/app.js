@@ -2525,11 +2525,45 @@ function parseUtcDate(dateStr) {
   return new Date(dateStr + " UTC");
 }
 
-function createStrategyItemElement(s) {
+function loadQueriesToActiveInput(queries, isAi = false) {
+  const joinedQuery = queries.join(", ");
+  const activeSource = state.activeSource || "google";
+  const activeMode = state.activeMode || "manual";
+
+  if (isAi || activeMode === "ai") {
+    switchSearchMode("ai");
+    if (elRequirementInput) elRequirementInput.value = joinedQuery;
+  } else {
+    switchSearchMode("manual");
+    if (activeSource === "all") {
+      if (elKeywordsInputAll) elKeywordsInputAll.value = joinedQuery;
+    } else if (activeSource === "google") {
+      if (elKeywordsInput) elKeywordsInput.value = joinedQuery;
+    } else if (activeSource === "india") {
+      const firstRow = document.querySelector("#manual-india-query-rows-container .row-text");
+      if (firstRow) {
+        firstRow.value = joinedQuery;
+      } else if (elKeywordsInput) {
+        elKeywordsInput.value = joinedQuery;
+      }
+    } else if (activeSource === "espacenet") {
+      const firstRow = document.querySelector("#manual-espacenet-query-rows-container .row-text");
+      if (firstRow) {
+        firstRow.value = joinedQuery;
+      } else if (elKeywordsInput) {
+        elKeywordsInput.value = joinedQuery;
+      }
+    } else {
+      if (elKeywordsInput) elKeywordsInput.value = joinedQuery;
+    }
+  }
+}
+
+function createStrategyItemElement(s, isFailedSection = false) {
   const div = document.createElement("div");
   div.className = "saved-keyword-item";
   const isAi = s.search_mode === "ai";
-  const isFailed = s.search_mode === "failed";
+  const isFailed = s.search_mode === "failed" || isFailedSection;
 
   const dateObj = parseUtcDate(s.created_at);
   const dateStr =
@@ -2537,21 +2571,18 @@ function createStrategyItemElement(s) {
     ", " +
     dateObj.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 
-  let tagClass = "manual-tag";
-  let tagText = "Manual";
+  let tagHtml = "";
   if (isAi) {
-    tagClass = "ai-tag";
-    tagText = "AI Strategy";
-  } else if (isFailed) {
-    tagClass = "failed-tag";
-    tagText = "Failed / Remaining";
+    tagHtml = `<span class="query-tag ai-tag">AI Strategy</span>`;
+  } else if (!isFailed) {
+    tagHtml = `<span class="query-tag manual-tag">Manual</span>`;
   }
 
   div.innerHTML = `
     <div style="display: flex; align-items: center; gap: 10px; width: 100%; min-width: 0;">
       <input type="checkbox" class="strategy-item-checkbox" data-query="${escapeHtml(s.query)}" data-mode="${s.search_mode}" style="cursor: pointer; width: 16px; height: 16px; flex-shrink: 0;" />
       <div class="saved-keyword-info" style="margin-left: 0;">
-        <span class="query-tag ${tagClass}">${tagText}</span>
+        ${tagHtml}
         <span class="saved-keyword-text" title="${escapeHtml(s.query)}">${escapeHtml(s.query)}</span>
         <span class="meta-text">${dateStr}</span>
       </div>
@@ -2561,13 +2592,7 @@ function createStrategyItemElement(s) {
 
   div.querySelector(".btn-load-strategy").addEventListener("click", () => {
     const cleanedQuery = s.query.replace(/\s*\[[^\]]+\]\s*$/, "");
-    if (isAi) {
-      switchSearchMode("ai");
-      elRequirementInput.value = cleanedQuery;
-    } else {
-      switchSearchMode("manual");
-      elKeywordsInput.value = cleanedQuery;
-    }
+    loadQueriesToActiveInput([cleanedQuery], isAi);
     elModalSavedKeywords.classList.add("hidden");
   });
 
@@ -2595,9 +2620,33 @@ async function showSavedKeywordsModal() {
       return;
     }
 
-    // Divide into scraped vs failed/remaining
-    const scrapedList = searches.filter((s) => s.search_mode !== "failed");
-    const failedList = searches.filter((s) => s.search_mode === "failed");
+    // Deduplicate searches & update timestamps to latest
+    const sorted = [...searches].sort((a, b) => parseUtcDate(b.created_at) - parseUtcDate(a.created_at));
+    const successMap = new Map();
+    const failedMap = new Map();
+
+    for (const s of sorted) {
+      const cleanKw = s.query.replace(/\s*\[[^\]]+\]\s*$/, "").trim().toLowerCase();
+      const isFailed = s.search_mode === "failed";
+
+      if (!isFailed) {
+        if (!successMap.has(cleanKw)) {
+          successMap.set(cleanKw, s);
+        }
+      } else {
+        if (!failedMap.has(cleanKw)) {
+          failedMap.set(cleanKw, s);
+        }
+      }
+    }
+
+    // If query succeeded, remove it from failed list
+    for (const cleanKw of successMap.keys()) {
+      failedMap.delete(cleanKw);
+    }
+
+    const scrapedList = Array.from(successMap.values());
+    const failedList = Array.from(failedMap.values());
 
     // Helper to build a section with a select-all checkbox and Load Selected button
     function createSection(titleText, items, isFailedSection) {
@@ -2609,12 +2658,6 @@ async function showSavedKeywordsModal() {
 
       const headerRow = document.createElement("div");
       headerRow.className = "section-header-row";
-      headerRow.style.display = "flex";
-      headerRow.style.alignItems = "center";
-      headerRow.style.justifyContent = "space-between";
-      headerRow.style.borderBottom = "1px solid var(--border-color)";
-      headerRow.style.paddingBottom = "6px";
-      headerRow.style.marginBottom = "12px";
 
       const leftSide = document.createElement("div");
       leftSide.style.display = "flex";
@@ -2667,7 +2710,7 @@ async function showSavedKeywordsModal() {
         loadSelectedBtn.style.opacity = "0.5";
       } else {
         items.forEach((s) => {
-          const div = createStrategyItemElement(s);
+          const div = createStrategyItemElement(s, isFailedSection);
           container.appendChild(div);
         });
 
@@ -2702,16 +2745,9 @@ async function showSavedKeywordsModal() {
           const queries = checkedCbs.map((cb) =>
             cb.dataset.query.replace(/\s*\[[^\]]+\]\s*$/, ""),
           );
-          const joinedQuery = queries.join(", ");
 
           const anyAi = checkedCbs.some((cb) => cb.dataset.mode === "ai");
-          if (anyAi) {
-            switchSearchMode("ai");
-            elRequirementInput.value = joinedQuery;
-          } else {
-            switchSearchMode("manual");
-            elKeywordsInput.value = joinedQuery;
-          }
+          loadQueriesToActiveInput(queries, anyAi);
           elModalSavedKeywords.classList.add("hidden");
         });
       }
