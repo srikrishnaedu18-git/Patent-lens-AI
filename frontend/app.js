@@ -407,7 +407,10 @@ function switchAuthMode(mode) {
 }
 
 function initAuth() {
+  const overlay = document.getElementById("auth-overlay");
   const form = document.getElementById("auth-form");
+  const submitBtn = document.getElementById("btn-auth-submit");
+  const errorMsg = document.getElementById("auth-error-msg");
   const toggleBtn = document.getElementById("btn-auth-toggle");
   const tabLogin = document.getElementById("tab-auth-login");
   const tabRegister = document.getElementById("tab-auth-register");
@@ -441,45 +444,50 @@ function initAuth() {
     });
   }
 
-  form.addEventListener("submit", async (e) => {
-    e.preventDefault();
-    errorMsg.classList.add("hidden");
-    submitBtn.disabled = true;
+  if (form) {
+    form.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      if (errorMsg) errorMsg.classList.add("hidden");
+      if (submitBtn) submitBtn.disabled = true;
 
-    const username = document.getElementById("auth-username").value.trim();
-    const password = document.getElementById("auth-password").value;
+      const username = document.getElementById("auth-username").value.trim();
+      const password = document.getElementById("auth-password").value;
 
-    const url = authMode === "login" ? "/api/auth/login" : "/api/auth/register";
-    try {
-      // Use originalFetch here too to prevent handling 401 via general interceptor
-      const res = await originalFetch(url, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ username, password }),
-      });
+      const url = authMode === "login" ? "/api/auth/login" : "/api/auth/register";
+      try {
+        // Use originalFetch here too to prevent handling 401 via general interceptor
+        const res = await originalFetch(url, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ username, password }),
+        });
 
-      if (!res.ok) {
+        if (!res.ok) {
+          const data = await res.json();
+          throw new Error(data.detail || "Authentication failed");
+        }
+
         const data = await res.json();
-        throw new Error(data.detail || "Authentication failed");
+        const userDisplay = document.getElementById("user-display-name");
+        if (userDisplay) userDisplay.textContent = data.username;
+        if (overlay) overlay.classList.add("hidden");
+
+        // Clear inputs
+        document.getElementById("auth-username").value = "";
+        document.getElementById("auth-password").value = "";
+
+        // Load dashboard data
+        loadProjects();
+      } catch (err) {
+        if (errorMsg) {
+          errorMsg.textContent = err.message;
+          errorMsg.classList.remove("hidden");
+        }
+      } finally {
+        if (submitBtn) submitBtn.disabled = false;
       }
-
-      const data = await res.json();
-      document.getElementById("user-display-name").textContent = data.username;
-      overlay.classList.add("hidden");
-
-      // Clear inputs
-      document.getElementById("auth-username").value = "";
-      document.getElementById("auth-password").value = "";
-
-      // Load dashboard data
-      loadProjects();
-    } catch (err) {
-      errorMsg.textContent = err.message;
-      errorMsg.classList.remove("hidden");
-    } finally {
-      submitBtn.disabled = false;
-    }
-  });
+    });
+  }
 
   // Logout button event listener
   const logoutBtn = document.getElementById("btn-logout");
@@ -604,7 +612,9 @@ async function loadProjects() {
     state.projects = await res.json();
     renderProjectsList();
   } catch (err) {
-    console.error("Error loading projects:", err);
+    if (err.message !== "Unauthorized") {
+      console.error("Error loading projects:", err);
+    }
   }
 }
 
