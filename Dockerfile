@@ -6,6 +6,8 @@ ENV PYTHONUNBUFFERED=1
 ENV PORT=8000
 ENV HOST=0.0.0.0
 ENV ENV=production
+# Make all sub-packages (backend/, db/, ai/) importable from project root
+ENV PYTHONPATH=/app
 
 WORKDIR /app
 
@@ -46,8 +48,10 @@ RUN python -m playwright install chromium
 # Copy app
 COPY . .
 
-# Expose port
+# Expose the default port (Render overrides this with its own PORT env var)
 EXPOSE 8000
 
-# Production entrypoint
-CMD ["python", "backend/server.py"]
+# Production entrypoint — run uvicorn directly from project root (/app)
+# server.py is in backend/ but is imported as "backend.server" module.
+# Shell form lets $PORT be expanded at runtime (Render injects PORT=10000).
+CMD ["sh", "-c", "uvicorn backend.server:app --host ${HOST} --port ${PORT} --workers 1"]
