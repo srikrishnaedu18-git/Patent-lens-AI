@@ -68,9 +68,10 @@ def add_column_sql(table: str, column: str, col_def: str) -> str:
 
 def insert_and_get_id(cursor, statement: str, params=()):
     if get_database_backend() == "postgres":
-        if "RETURNING" not in statement.upper():
-            statement = f"{statement} RETURNING id"
-        cursor.execute(statement, params)
+        clean_statement = statement.rstrip(";").strip()
+        if "RETURNING" not in clean_statement.upper():
+            clean_statement = f"{clean_statement} RETURNING id;"
+        cursor.execute(clean_statement, params)
         row = cursor.fetchone()
         if not row:
             return None
