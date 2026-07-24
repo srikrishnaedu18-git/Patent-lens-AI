@@ -16,292 +16,79 @@ FastAPI backend
   backend/server.py
         |
         +-- Scraping
-        |     backend/scraper.py
+        |     backend/scraper.py (Google, Indian, Espacenet/EPO OPS)
         |
         +-- AI
-        |     ai/ai_agent.py
+        |     ai/ai_agent.py (Gemini API)
         |
         +-- Persistence
-              db/db.py
-              SQLite locally or PostgreSQL in deployment
+              db/db.py (SQLite locally or PostgreSQL)
 ```
 
-The app is a single-page frontend served by FastAPI. The browser calls API routes in `backend/server.py`. Long-running scrape and audit work is launched as background tasks, and progress is streamed back to the browser through SSE.
+The app is a single-page frontend served by FastAPI. Long-running scrape and audit tasks are executed in background threads, and live updates are streamed back to the browser via SSE (`/api/ai/stream/{task_id}`).
 
 ## Frontend Wiring
 
-`frontend/app.js` owns the browser state:
+`frontend/app.js` manages application state:
 
-- Current user session.
-- Active project.
-- Selected source: Google Patents or Indian Patents.
-- Indian search row options.
-- CAPTCHA mode.
-- Active SSE task ID.
-- Last scraped search ID for AI audit.
+- Active user session and current project ID.
+- Selected search mode: Manual Keywords vs AI Auto-Generate.
+- Selected search platform: Google Patents, Indian Patents, Espacenet, or **All Platforms** (Multi-Platform Sequential Mode).
+- Invention description state (persisted in `localStorage` as `patentlens_invention_description`).
+- Active SSE stream task ID and event source instance.
+- Real-time collapsible search bar filter query and multi-facet modal filter state.
 
-Important frontend flows:
+### Key Frontend UI Components:
 
-- Manual scrape submit builds the request body and calls `POST /api/scrape`.
-- AI query generation calls `POST /api/ai/generate-queries`.
-- Confirmed AI search calls `POST /api/ai/confirm-search`.
-- Live updates connect to `GET /api/ai/stream/{task_id}`.
-- CAPTCHA challenge images are shown when SSE emits `stage: "captcha"`.
-- Pipeline pill state is updated in `handleSSEStageUpdate`.
-- When an SSE event includes `reset_pipeline`, the frontend reinitializes the visible pipeline pills.
-- Scraped History toolbar actions operate on checked patents: AI Audit, Deep scrape, CSV export, and Delete.
-- Patent card clicks open the detail modal with ID, title, keyword context, abstract, AI audit content, and deep scrape content.
-- Patent ID badges link to the original patent URL and show an external-link icon.
+1. **Multi-Platform Sequential Scraper**:
+   - `handleManualScrapeSubmit` detects `activeSource === "all"`.
+   - Executes a loop over `["google", "india", "espacenet"]`.
+   - Sends a dedicated `POST /api/scrape` for each platform segment.
+   - Listens to the SSE stream via `startSSEStream`, invoking `initStagePillsForFlow("manual_scrape")` at each step to reset stage progress pills cleanly.
+2. **Invention Description Modal (`#modal-invention`)**:
+   - Triggered by "Describe Invention" in the search mode toggle bar.
+   - Persists text to `localStorage` and updates button badge status.
+3. **Multi-Facet Relevancy & Metadata Filter (`#modal-filter`)**:
+   - Offers 4 filter categories: Relevancy Category, AI Audit Status, Deep Scrape Status, and Source Platform.
+4. **Collapsible Real-Time Search Bar**:
+   - Filters history cards live across patent ID, title, abstract, search terms, audit reasoning, and deep scrape text.
+5. **Redesigned Delete Confirmation (`#modal-delete-confirm`)**:
+   - Renders individual cards with color-coded badges for "Search Run" vs "Patent".
 
-The Scraped History UI renders whatever is stored in the DB. It does not intentionally truncate abstracts in JavaScript.
+## Scraper Drivers (`backend/scraper.py`)
 
-Visual state rules:
+1. **Google Patents**:
+   - Playwright Chromium driver navigates search result pages.
+   - Enriched via `_fetch_google_patent_details_jsonld` reading `<section itemprop="abstract">`, `DC.description`, and falling back from B to A publications.
+2. **Indian Patents**:
+   - Playwright Chromium driver targeting `https://iprsearch.ipindia.gov.in/PublicSearch/`.
+   - Applies search rows for `CSP` (Complete Specification), `TI` (Title), `ABS` (Abstract), etc.
+   - Handles CAPTCHA challenges with up to 2 attempts per session and full pipeline restarts.
+3. **Espacenet (EPO OPS API)**:
+   - Asynchronous HTTP driver (`httpx`) using EPO Open Patent Services (OPS) REST API (`https://ops.epo.org`).
+   - Obtains OAuth 2.0 access tokens using `EPO_OPS_CONSUMER_KEY` and `EPO_OPS_CONSUMER_SECRET`.
+   - Executes CQL queries (`TA` Title/Abstract, `TXT` Text) and enriches results via the EPO biblio endpoint.
 
-- `relevancy-badge--unaudited` is amber for pending AI audit.
-- `relevancy-badge--red`, `--yellow`, and `--green` show completed AI audit categories.
-- `btn-card-deep-scrape--pending` is amber for patents without saved deep scrape text.
-- `btn-card-deep-scrape--done` is green for patents with saved deep scrape text.
+## SSE Pipeline & Backend Orchestration
 
-## Backend API Layer
+Task queues in `backend/server.py`:
+- `_task_queues`: Map of `task_id` to `asyncio.Queue` emitting SSE JSON events.
+- `_captcha_futures` & `_captcha_attempts`: State trackers for Indian Patent CAPTCHA solving.
+- `_task_cancelled`: Cancellation flags for user-terminated scrape tasks.
 
-`backend/server.py` provides:
-
-- Session auth.
-- Project CRUD.
-- Manual scrape orchestration.
-- AI query generation and confirmed AI scrape.
-- CAPTCHA request/answer handling.
-- SSE stream generation.
-- AI audit orchestration.
-- Selected-patent AI audit orchestration.
-- Selected-patent deep scrape orchestration.
-- CSV exports.
-- History deletion.
-- Static frontend hosting.
-
-Long-running operations do not block the initial HTTP request. They create a task ID, push events into an in-memory asyncio queue, and return `{"status": "processing", "task_id": ...}` to the browser.
-
-## SSE Pipeline
-
-Task queues live in `backend/server.py`:
-
-- `_task_queues`
-- `_captcha_futures`
-- `_captcha_attempts`
-- `_task_cancelled`
-
-The frontend uses one stream endpoint:
-
-```text
-GET /api/ai/stream/{task_id}
-```
-
-Events normally include:
-
+Stream events follow the canonical format:
 ```json
 {
   "stage": "scraping",
-  "message": "..."
+  "message": "Searching keyword 1/1: solar...",
+  "reset_pipeline": false
 }
 ```
 
-Supported UI stages:
+UI display stage progression: `Planning → Scraping → Saving → Complete`.
 
-- `planning`
-- `scraping`
-- `captcha`
-- `auditing`
-- `saving`
-- `complete`
-- `error`
+## Persistence & Exports
 
-Manual pipeline display stages are:
-
-```text
-Planning -> Scraping -> Saving -> Done
-```
-
-AI audit display stages are:
-
-```text
-Auditing -> Done
-```
-
-## Manual Scrape Flow
-
-Frontend:
-
-1. User enters manual keywords or Indian query rows.
-2. `handleManualScrapeSubmit` builds `keywords`, `sources`, `india_options`, and CAPTCHA settings.
-3. Browser calls `POST /api/scrape`.
-4. Browser opens the SSE stream for the returned task ID.
-
-Backend:
-
-1. `trigger_manual_scrape` validates the request.
-2. It normalizes keywords and source options.
-3. It starts `_manual_pipeline`.
-4. `_manual_pipeline` calls `scrape_patents`.
-5. Successful results are saved with `create_search` and `save_patents`.
-6. Final project data is pushed with `stage: "complete"`.
-
-## Google Patents Scraping
-
-Primary code:
-
-```text
-backend/scraper.py
-  scrape_patents
-  scrape_google_patents
-  _fetch_google_patent_details_jsonld
-```
-
-Flow:
-
-1. Playwright opens Google Patents search results.
-2. Result cards are parsed for patent ID, URL, title, and a fallback snippet.
-3. Each result is enriched through `_fetch_google_patent_details_jsonld`.
-4. The enrichment fetches Google's detail page through HTTP.
-5. The parser tries, in order:
-   - `<section itemprop="abstract">`
-   - `DC.description`
-   - nested `<abstract>`
-   - `<summary-of-invention>`
-6. If a granted B publication has no abstract, candidate A publications are tried.
-7. Related Google "Other versions" links are followed as fallback candidates.
-8. The final list is returned to the server and saved.
-
-Important invariant:
-
-```text
-scrape_patents must return all_results on success.
-```
-
-Without this return, the scraper may log found rows but the save layer receives no patents.
-
-## Indian Patents Scraping
-
-Primary code:
-
-```text
-backend/scraper.py
-  scrape_india_patents
-  _apply_india_search_options
-  _solve_india_captcha
-  _extract_india_result_rows
-  _fetch_india_patent_detail
-```
-
-Flow:
-
-1. Playwright opens `https://iprsearch.ipindia.gov.in/PublicSearch/`.
-2. Search options are applied from `india_options`.
-3. If CAPTCHA is visible, `_solve_india_captcha` asks the backend for a solution.
-4. The backend solves through 2Captcha or asks the user manually.
-5. Results table rows are extracted.
-6. Each Indian application detail is fetched through the IP India detail endpoint.
-7. Patent rows are normalized and returned.
-
-Current CAPTCHA policy:
-
-- `INDIA_CAPTCHA_MAX_ATTEMPTS = 2` in `backend/scraper.py`.
-- `MAX_CAPTCHA_ATTEMPTS = 2` in `backend/server.py`.
-- `MAX_MANUAL_PIPELINE_CAPTCHA_RESTARTS = 3` in `backend/server.py`.
-
-If CAPTCHA fails twice inside a page/session, the manual pipeline restarts from the beginning. The frontend receives `reset_pipeline: true` and resets the visible pipeline state.
-
-## Saving And Data Model
-
-`db/db.py` owns schema creation and migrations.
-
-Key tables:
-
-- `users`
-- `sessions`
-- `projects`
-- `searches`
-- `patents`
-
-Saving flow:
-
-```text
-_manual_pipeline or _ai_pipeline
-  -> create_search(...)
-  -> save_patents(search_id, patents, user_id)
-```
-
-Patent rows use canonical keys:
-
-- `rank`
-- `source`
-- `patent_id`
-- `title`
-- `abstract`
-- `url`
-- optional `confidence_score`
-- optional `ai_reasoning`
-- optional `deep_scrape_text`
-- optional `deep_scraped_at`
-
-The DB layer verifies ownership when `user_id` is supplied.
-
-## AI Flow
-
-`ai/ai_agent.py` wraps Gemini.
-
-AI search:
-
-1. User enters invention requirement.
-2. `generate_search_queries` produces search queries, CPC codes, and rationale.
-3. User confirms or edits queries.
-4. Confirmed queries are scraped and saved.
-
-AI audit:
-
-1. User checks patents in Scraped History.
-2. User clicks the toolbar AI Audit button.
-3. The frontend calls `POST /api/ai/audit-selected` with the active project ID and selected patent IDs.
-4. The backend verifies project ownership and selected patent membership.
-5. Each patent is scored against the requirement or saved keyword context.
-6. Audit fields are written back to the `patents` table.
-7. SSE events update cards live, and completion reloads project history.
-
-## Exports
-
-Export routes load selected patents or all project patents, enrich relevancy labels, apply optional filters, and emit:
-
-- CSV through `POST /api/projects/{project_id}/export/csv`
-
-Export fields are defined in `EXPORT_FIELDS` in `backend/server.py`.
-
-Deep scrape text is intentionally not exported as one huge CSV cell. Spreadsheet programs can reject or truncate cells over their character limit, so the export route chunks `deep_scrape_text` into numbered fields:
-
-```text
-deep_scrape_text_part_1
-deep_scrape_text_part_2
-deep_scrape_text_part_3
-...
-```
-
-The chunk size is controlled by `CSV_CELL_SAFE_LIMIT` in `backend/server.py`. This keeps all content in the same patent row while avoiding LibreOffice and Excel cell-limit warnings.
-
-## Deep Scrape Flow
-
-1. User checks patents in Scraped History.
-2. User clicks the toolbar Deep scrape button.
-3. The frontend calls `POST /api/deep-scrape` with the active project ID and selected patent IDs.
-4. The backend verifies project ownership and selected patent membership.
-5. `fetch_patent_deep_scrape` opens each saved patent URL.
-6. The extractor saves title, abstract, description, and claims text, stopping before Google's citations/footer area and removing table-like blocks.
-7. Progress is streamed through the normal Live Pipeline Log.
-8. Saved text is stored in `patents.deep_scrape_text` with `deep_scraped_at`.
-9. The frontend reloads project history; deep-scraped cards switch from amber pending state to green done state.
-10. Clicking a patent card shows the saved deep scrape content inside the patent detail modal.
-
-## Operational Notes
-
-- Use `ENV=production` locally when you want a single backend process without uvicorn reload.
-- Use reload only during development.
-- The `.env` file is loaded with `load_dotenv(override=True)`.
-- Existing saved abstracts are not backfilled automatically when scraper logic changes. Rerun a scrape to store improved abstracts.
-- The backend stores task queues in memory, so active SSE tasks do not survive a server restart.
+- Database abstraction in `db/db.py` supports SQLite (default) and PostgreSQL (`DATABASE_URL`).
+- Cascading deletion for user project data.
+- CSV export (`POST /api/projects/{project_id}/export/csv`) splits long deep scrape body text into spreadsheet-safe columns (`deep_scrape_text_part_1`, `part_2`, etc.) governed by `CSV_CELL_SAFE_LIMIT`.
