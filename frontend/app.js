@@ -759,7 +759,7 @@ async function handleManualScrapeSubmit(e) {
           });
         } else if (result.data) {
           writeLogLine(`💾 ${src.toUpperCase()} search complete and saved.`, "success");
-          await renderProject(state.activeProjectId);
+          await loadProjectHistory(state.activeProjectId);
         }
       } catch (err) {
         writeLogLine(`⚠️ ${src.toUpperCase()} scrape error: ${err.message}`, "warning");
@@ -769,7 +769,7 @@ async function handleManualScrapeSubmit(e) {
     setManualLoading(false);
     writeLogLine("🎉 Sequential Multi-Platform Search Completed Successfully!", "success");
     if (elKeywordsInputAll) elKeywordsInputAll.value = "";
-    await renderProject(state.activeProjectId);
+    await loadProjectHistory(state.activeProjectId);
     return;
   } else if (activeSource === "google") {
     keywords = elKeywordsInput.value.trim();
@@ -1222,6 +1222,7 @@ function startSSEStream(taskId, onComplete = null) {
   };
 
   eventSource.onerror = (err) => {
+    if (!state.activeEventSource) return; // Clean exit if already closed by onmessage completion
     console.error("SSE Connection error:", err);
     writeLogLine(
       "⚠️ EventStream disconnected. Checking task completion status...",
@@ -1252,9 +1253,6 @@ function setPipelineLoading(isLoading) {
   if (!isLoading) {
     if (elBtnTerminateScrape) {
       elBtnTerminateScrape.classList.add("hidden");
-    }
-    if (elLiveFeed) {
-      elLiveFeed.classList.add("hidden");
     }
   }
 }
