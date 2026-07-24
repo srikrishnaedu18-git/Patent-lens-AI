@@ -1561,6 +1561,21 @@
     </div>
 
     <!-- Filter Mismatch Alert Dialog -->
+    <!-- ── Export Loading Overlay ──────────────────────────────────────── -->
+    <div id="modal-export-loading" class="modal-overlay hidden export-loading-overlay">
+      <div class="export-loading-card">
+        <div class="export-loading-spinner">
+          <svg viewBox="0 0 50 50" class="export-spinner-svg">
+            <circle cx="25" cy="25" r="20" fill="none" stroke-width="4"
+              stroke="var(--accent-primary)" stroke-linecap="round"
+              stroke-dasharray="100 55" />
+          </svg>
+        </div>
+        <p id="export-loading-label" class="export-loading-label">Preparing export…</p>
+        <p class="export-loading-sub">This may take a moment for large datasets.</p>
+      </div>
+    </div>
+
     <div id="modal-alert" class="modal-overlay hidden">
       <div class="modal modal-alert">
         <div class="modal-header">
@@ -1805,6 +1820,6 @@
       </div>
     </div>
 
-    <script src="app.js?v=3"></script>
+    <script src="app.js?v=4"></script>
   </body>
 </html>

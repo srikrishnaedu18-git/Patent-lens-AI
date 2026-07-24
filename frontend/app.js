@@ -2322,6 +2322,13 @@ async function downloadExport(format, patentIds = null) {
     return;
   }
 
+  const elLoadingModal = document.getElementById("modal-export-loading");
+  const elLoadingLabel = document.getElementById("export-loading-label");
+
+  const formatLabel = format === "csv" ? "CSV Spreadsheet" : "Markdown Report";
+  if (elLoadingLabel) elLoadingLabel.textContent = `Preparing ${formatLabel}…`;
+  if (elLoadingModal) elLoadingModal.classList.remove("hidden");
+
   const url = `/api/projects/${state.activeProjectId}/export/${format}`;
   const body = {};
   if (patentIds) body.patent_ids = patentIds;
@@ -2354,6 +2361,8 @@ async function downloadExport(format, patentIds = null) {
     window.URL.revokeObjectURL(downloadUrl);
   } catch (err) {
     alert(`Export failed: ${err.message}`);
+  } finally {
+    if (elLoadingModal) elLoadingModal.classList.add("hidden");
   }
 }
 
