@@ -3077,7 +3077,20 @@ function setupEventListeners() {
       if (elDeleteSelectedList) {
         elDeleteSelectedList.innerHTML = displayItems
           .map((item) => {
-            return `<div style="padding: 6px 10px; background: var(--bg-secondary); border-radius: var(--radius-sm); border: 1px solid var(--border-color); text-overflow: ellipsis; overflow: hidden; white-space: nowrap;">${escapeHtml(item)}</div>`;
+            const isSearch = item.type === "search";
+            const iconSvg = isSearch
+              ? `<svg class="icon-xs" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="color: var(--accent); flex-shrink: 0;"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>`
+              : `<svg class="icon-xs" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="color: var(--danger); flex-shrink: 0;"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline></svg>`;
+
+            const badgeHtml = isSearch
+              ? `<span class="delete-item-badge delete-item-badge--search">Search Run</span>`
+              : `<span class="delete-item-badge delete-item-badge--patent">Patent</span>`;
+
+            return `<div class="delete-item-row">
+              ${iconSvg}
+              ${badgeHtml}
+              <span class="delete-item-text" title="${escapeHtml(item.label)}">${escapeHtml(item.label)}</span>
+            </div>`;
           })
           .join("");
       }
@@ -3641,8 +3654,11 @@ function getSelectedItemsToDelete() {
 
     if (headerCb.checked) {
       searchIds.push(searchId);
-      // Show just the keyword text
-      displayItems.push(searchQuery);
+      displayItems.push({
+        type: "search",
+        label: searchQuery,
+        id: searchId,
+      });
     } else {
       const patentCbs = card.querySelectorAll(
         ".patent-select-checkbox:checked",
@@ -3654,8 +3670,11 @@ function getSelectedItemsToDelete() {
           .querySelector(".patent-title");
         const titleText = titleEl ? titleEl.textContent.trim() : "";
         patentIds.push(patentId);
-        // Show just the patent title (or ID if no title)
-        displayItems.push(titleText || `Patent #${patentId}`);
+        displayItems.push({
+          type: "patent",
+          label: titleText || `Patent #${patentId}`,
+          id: patentId,
+        });
       });
     }
   });

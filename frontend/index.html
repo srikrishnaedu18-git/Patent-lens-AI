@@ -1559,7 +1559,7 @@
 
     <!-- Delete Confirmation Modal -->
     <div id="modal-delete-confirm" class="modal-overlay hidden">
-      <div class="modal modal-alert">
+      <div class="modal modal-alert" style="max-width: 480px;">
         <div class="modal-header">
           <h3
             style="
@@ -1586,37 +1586,15 @@
             Confirm Deletion
           </h3>
         </div>
-        <div class="alert-body">
-          <p>Do you want to delete the following selected items?</p>
-          <div
-            id="delete-selected-list"
-            style="
-              margin-top: 12px;
-              max-height: 150px;
-              overflow-y: auto;
-              border: 1px solid var(--border-color);
-              padding: 8px;
-              border-radius: var(--radius-md);
-              background: var(--bg-primary);
-              text-align: left;
-              font-size: var(--font-sm);
-              display: flex;
-              flex-direction: column;
-              gap: 6px;
-            "
-          >
+        <div class="alert-body" style="padding: 16px 24px;">
+          <p style="margin-bottom: 8px; color: var(--text-primary); font-weight: 500;">
+            Are you sure you want to delete the following selected item(s)?
+          </p>
+          <div id="delete-selected-list">
             <!-- Dynamic list of items to delete -->
           </div>
         </div>
-        <div
-          class="alert-footer"
-          style="
-            display: flex;
-            justify-content: flex-end;
-            gap: 8px;
-            margin-top: 15px;
-          "
-        >
+        <div class="alert-footer">
           <button type="button" id="btn-delete-cancel" class="btn-secondary">
             Cancel
           </button>
@@ -1626,7 +1604,7 @@
             class="btn-primary"
             style="background-color: var(--danger); border-color: var(--danger)"
           >
-            Delete
+            Delete Items
           </button>
         </div>
       </div>
