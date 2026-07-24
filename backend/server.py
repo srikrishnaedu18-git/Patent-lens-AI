@@ -199,7 +199,8 @@ def health_check():
             cur.execute("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name")
 
         rows = cur.fetchall()
-        result["tables"] = [row[0] for row in rows]
+        col = "table_name" if backend == "postgres" else "name"
+        result["tables"] = [row[col] for row in rows]
         result["db_connect"] = True
         conn.close()
     except Exception as e:
