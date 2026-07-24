@@ -223,9 +223,11 @@ const elIndiaOptToDate = document.getElementById("india-opt-to-date");
 const elBtnIndiaCancel = document.getElementById("btn-india-cancel");
 
 // Manual search panel Espacenet elements
+const elBtnSourceAll = document.getElementById("btn-source-all");
 const elBtnSourceGoogle = document.getElementById("btn-source-google");
 const elBtnSourceIndia = document.getElementById("btn-source-india");
 const elBtnSourceEspacenet = document.getElementById("btn-source-espacenet");
+const elKeywordsInputAll = document.getElementById("keywords-input-all");
 const elBtnManualIndiaAddRow = document.getElementById(
   "btn-manual-india-add-row",
 );
@@ -414,7 +416,7 @@ function initSearchSources() {
   const saved = JSON.parse(localStorage.getItem("searchSources") || "null");
   if (Array.isArray(saved) && saved.length > 0) {
     state.searchSources = saved.filter((src) =>
-      ["google", "india", "espacenet"].includes(src),
+      ["all", "google", "india", "espacenet"].includes(src),
     );
   }
   if (state.searchSources.length === 0) state.searchSources = ["google"];
@@ -448,20 +450,29 @@ function syncSourceToggleButtons() {
 
 function updateSourceFieldsVisibility() {
   const activeSource = state.searchSources[0] || "google";
+  const elAllFields = document.getElementById("group-keywords-all");
   const elGoogleFields = document.getElementById("group-keywords-google");
   const elIndiaFields = document.getElementById("group-keywords-india");
   const elEspacenetFields = document.getElementById("group-keywords-espacenet");
 
-  if (activeSource === "google") {
+  if (activeSource === "all") {
+    if (elAllFields) elAllFields.classList.remove("hidden");
+    if (elGoogleFields) elGoogleFields.classList.add("hidden");
+    if (elIndiaFields) elIndiaFields.classList.add("hidden");
+    if (elEspacenetFields) elEspacenetFields.classList.add("hidden");
+  } else if (activeSource === "google") {
+    if (elAllFields) elAllFields.classList.add("hidden");
     if (elGoogleFields) elGoogleFields.classList.remove("hidden");
     if (elIndiaFields) elIndiaFields.classList.add("hidden");
     if (elEspacenetFields) elEspacenetFields.classList.add("hidden");
   } else if (activeSource === "india") {
+    if (elAllFields) elAllFields.classList.add("hidden");
     if (elGoogleFields) elGoogleFields.classList.add("hidden");
     if (elIndiaFields) elIndiaFields.classList.remove("hidden");
     if (elEspacenetFields) elEspacenetFields.classList.add("hidden");
     renderManualIndiaQueryRows();
   } else if (activeSource === "espacenet") {
+    if (elAllFields) elAllFields.classList.add("hidden");
     if (elGoogleFields) elGoogleFields.classList.add("hidden");
     if (elIndiaFields) elIndiaFields.classList.add("hidden");
     if (elEspacenetFields) elEspacenetFields.classList.remove("hidden");
@@ -471,6 +482,7 @@ function updateSourceFieldsVisibility() {
 
 function getSourceLabel() {
   const labels = {
+    all: "All Platforms (Auto-Sequential)",
     google: "Google Patents",
     india: "Indian Patents",
     espacenet: "Espacenet",
@@ -661,7 +673,86 @@ async function handleManualScrapeSubmit(e) {
   let indiaRows = [];
   let espacenetRows = [];
 
-  if (activeSource === "google") {
+  if (activeSource === "all") {
+    keywords = (elKeywordsInputAll ? elKeywordsInputAll.value.trim() : "") || (elKeywordsInput ? elKeywordsInput.value.trim() : "");
+    if (!keywords) {
+      alert("Please enter at least one keyword for multi-platform search.");
+      return;
+    }
+
+    const checkedCbs = Array.from(document.querySelectorAll('input[name="search-source"]:checked')).map(cb => cb.value);
+    const enabledSources = checkedCbs.length > 0 ? checkedCbs : ["google", "india", "espacenet"];
+
+    setManualLoading(true);
+    if (elBtnTerminateScrape) {
+      elBtnTerminateScrape.classList.remove("hidden");
+      elBtnTerminateScrape.disabled = false;
+      elBtnTerminateScrape.innerText = "Stop";
+    }
+    elLiveFeed.classList.remove("hidden");
+    clearLiveLog();
+    writeLogLine(`🚀 Starting Auto-Sequential Search for "${keywords}" across enabled platforms: [${enabledSources.join(", ").toUpperCase()}]...`, "info");
+    initStagePillsForFlow("manual_scrape");
+
+    for (let sIdx = 0; sIdx < enabledSources.length; sIdx++) {
+      const src = enabledSources[sIdx];
+      writeLogLine(`\n🌐 [Step ${sIdx + 1}/${enabledSources.length}] Launching ${src.toUpperCase()} scraper...`, "info");
+
+      let payload = {
+        project_id: state.activeProjectId,
+        max_results: maxResults,
+        sources: [src],
+        captcha_mode: state.captchaMode,
+        captcha_service: state.captchaService,
+      };
+
+      if (src === "google") {
+        payload.keywords = keywords;
+      } else if (src === "india") {
+        payload.keywords = `CS: ${keywords}`;
+        payload.india_options = { rows: [{ field: "CS", text: keywords, logic: "AND" }] };
+      } else if (src === "espacenet") {
+        const cleanKw = keywords.replace(/"/g, "").trim();
+        payload.keywords = `(ti="${cleanKw}" or ab="${cleanKw}")`;
+        payload.espacenet_options = {
+          query_lang: (elEspacenetOptLang ? elEspacenetOptLang.value : "en") || "en",
+          rows: [{ field: "TA", operator: "all", text: keywords, logic: "AND" }]
+        };
+      }
+
+      try {
+        const response = await fetch("/api/scrape", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+        });
+        if (!response.ok) {
+          const errData = await response.json();
+          writeLogLine(`❌ ${src.toUpperCase()} scrape failed: ${errData.detail || "Error"}`, "error");
+          continue;
+        }
+        const result = await response.json();
+        if (result.status === "processing") {
+          state.activeTaskId = result.task_id;
+          writeLogLine(`📡 Stream connected for ${src.toUpperCase()}. Task ID: ${result.task_id}`, "info");
+          await new Promise((resolve) => {
+            startSSEStream(result.task_id, resolve);
+          });
+        } else if (result.data) {
+          writeLogLine(`💾 ${src.toUpperCase()} search complete and saved.`, "success");
+          await renderProject(state.activeProjectId);
+        }
+      } catch (err) {
+        writeLogLine(`⚠️ ${src.toUpperCase()} scrape error: ${err.message}`, "warning");
+      }
+    }
+
+    setManualLoading(false);
+    writeLogLine("🎉 Sequential Multi-Platform Search Completed Successfully!", "success");
+    if (elKeywordsInputAll) elKeywordsInputAll.value = "";
+    await renderProject(state.activeProjectId);
+    return;
+  } else if (activeSource === "google") {
     keywords = elKeywordsInput.value.trim();
     if (!keywords) {
       alert("Please enter at least one keyword.");
@@ -1086,14 +1177,25 @@ function initStagePillsForFlow(flowName) {
   });
 }
 
-function startSSEStream(taskId) {
+function startSSEStream(taskId, onComplete = null) {
   state.activeTaskId = taskId;
+  state.activeStreamOnComplete = onComplete;
   const eventSource = new EventSource(`/api/ai/stream/${taskId}`);
+  state.activeEventSource = eventSource;
 
   eventSource.onmessage = (event) => {
     try {
       const data = JSON.parse(event.data);
       handleSSEStageUpdate(data, taskId);
+      if (data.stage === "complete" || data.stage === "error") {
+        eventSource.close();
+        state.activeEventSource = null;
+        if (typeof state.activeStreamOnComplete === "function") {
+          const cb = state.activeStreamOnComplete;
+          state.activeStreamOnComplete = null;
+          cb();
+        }
+      }
     } catch (err) {
       console.error("SSE JSON parsing error:", err, event.data);
     }
@@ -1106,6 +1208,7 @@ function startSSEStream(taskId) {
       "warning",
     );
     eventSource.close();
+    state.activeEventSource = null;
     setPipelineLoading(false);
     if (elBtnGlobalAiAudit) {
       elBtnGlobalAiAudit.disabled = false;
@@ -1114,6 +1217,11 @@ function startSSEStream(taskId) {
     if (elBtnGlobalDeepScrape) {
       elBtnGlobalDeepScrape.disabled = false;
       elBtnGlobalDeepScrape.textContent = "Deep scrape";
+    }
+    if (typeof state.activeStreamOnComplete === "function") {
+      const cb = state.activeStreamOnComplete;
+      state.activeStreamOnComplete = null;
+      cb();
     }
   };
 }
@@ -3457,10 +3565,12 @@ function initEspacenetOptions() {
       rows:
         Array.isArray(saved.rows) && saved.rows.length > 0
           ? saved.rows
-          : [
-              { field: "TI", operator: "all", text: "", logic: "AND" },
-              { field: "TA", operator: "all", text: "", logic: "AND" },
-            ],
+          : [{ field: "TA", operator: "all", text: "", logic: "AND" }],
+    };
+  } else {
+    state.espacenetOptions = {
+      query_lang: "en",
+      rows: [{ field: "TA", operator: "all", text: "", logic: "AND" }],
     };
   }
 }
@@ -3569,13 +3679,6 @@ function renderManualEspacenetQueryRows() {
   if (rows.length === 0) {
     addEspacenetRowToUi(
       elManualEspacenetQueryRowsContainer,
-      "TI",
-      "all",
-      "",
-      "AND",
-    );
-    addEspacenetRowToUi(
-      elManualEspacenetQueryRowsContainer,
       "TA",
       "all",
       "",
@@ -3585,7 +3688,7 @@ function renderManualEspacenetQueryRows() {
     rows.forEach((r) => {
       addEspacenetRowToUi(
         elManualEspacenetQueryRowsContainer,
-        r.field || "TI",
+        r.field || "TA",
         r.operator || "all",
         r.text || "",
         r.logic || "AND",
@@ -3599,7 +3702,6 @@ function renderManualEspacenetQueryRows() {
 
 function resetEspacenetQueryRows() {
   state.espacenetOptions.rows = [
-    { field: "TI", operator: "all", text: "", logic: "AND" },
     { field: "TA", operator: "all", text: "", logic: "AND" },
   ];
   localStorage.setItem(

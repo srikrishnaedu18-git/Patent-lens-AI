@@ -367,6 +367,15 @@
                   >
                     <button
                       type="button"
+                      id="btn-source-all"
+                      class="source-toggle-btn"
+                      data-source="all"
+                      title="Run search sequentially across all enabled platforms (Google, Indian, Espacenet)"
+                    >
+                      🌐 All Platforms
+                    </button>
+                    <button
+                      type="button"
                       id="btn-source-google"
                       class="source-toggle-btn active"
                       data-source="google"
@@ -392,6 +401,22 @@
                   </div>
                 </div>
                 <form id="scrape-form-manual" class="scrape-form">
+                  <!-- All Platforms Fields -->
+                  <div id="group-keywords-all" class="source-fields-group hidden">
+                    <div class="form-group flex-grow">
+                      <label for="keywords-input-all">Keywords (Sequential Multi-Platform Search)</label>
+                      <input
+                        type="text"
+                        id="keywords-input-all"
+                        placeholder="e.g. smart irrigation, solar drip controller, soil moisture sensor"
+                        autocomplete="off"
+                      />
+                      <div style="margin-top: 6px; font-size: 0.78rem; color: var(--text-secondary);">
+                        Search will run sequentially across all platforms enabled in Settings (Google: Keyword, Indian: Complete Spec [CS], Espacenet: Title or Abstract [TA]).
+                      </div>
+                    </div>
+                  </div>
+
                   <!-- Google Patents Fields -->
                   <div id="group-keywords-google" class="source-fields-group">
                     <div class="form-group flex-grow">
