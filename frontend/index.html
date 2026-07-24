@@ -929,6 +929,27 @@
                 </div>
                 <div class="global-export-panel">
                   <div class="global-export-actions">
+                    <!-- Search button (placed before Filter) -->
+                    <button
+                      type="button"
+                      id="btn-toggle-search"
+                      class="btn-icon btn-search-toggle"
+                      aria-label="Search patents"
+                      title="Search Patents"
+                    >
+                      <svg
+                        class="icon-sm"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        stroke-width="2"
+                        stroke-linecap="round"
+                        stroke-linejoin="round"
+                      >
+                        <circle cx="11" cy="11" r="8" />
+                        <line x1="21" y1="21" x2="16.65" y2="16.65" />
+                      </svg>
+                    </button>
                     <!-- Filter button -->
                     <button
                       type="button"
@@ -1009,6 +1030,54 @@
                       Delete
                     </button>
                   </div>
+                </div>
+              </div>
+              <!-- Collapsible Search Bar Container -->
+              <div id="search-bar-container" class="search-bar-container hidden">
+                <div class="search-bar-inner">
+                  <svg
+                    class="search-input-icon icon-sm"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="2"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                  >
+                    <circle cx="11" cy="11" r="8" />
+                    <line x1="21" y1="21" x2="16.65" y2="16.65" />
+                  </svg>
+                  <input
+                    type="text"
+                    id="input-patent-search"
+                    class="patent-search-input"
+                    placeholder="Search patents by ID, title, abstract, keywords, deep text, or AI reasoning..."
+                    autocomplete="off"
+                  />
+                  <label id="search-select-all-wrap" class="search-select-all-wrap hidden" title="Select all matching search results">
+                    <input type="checkbox" id="search-select-all-cb" class="search-select-all-cb" />
+                    <span>Select All</span>
+                  </label>
+                  <span id="search-match-count" class="search-match-count hidden">0 matches</span>
+                  <button
+                    type="button"
+                    id="btn-clear-search"
+                    class="btn-icon btn-clear-search"
+                    title="Clear Search"
+                  >
+                    <svg
+                      class="icon-sm"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      stroke-width="2"
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                    >
+                      <line x1="18" y1="6" x2="6" y2="18" />
+                      <line x1="6" y1="6" x2="18" y2="18" />
+                    </svg>
+                  </button>
                 </div>
               </div>
               <div id="history-container" class="history-container"></div>
@@ -1236,7 +1305,7 @@
       </div>
     </div>
 
-    <!-- Relevancy Filter Modal -->
+    <!-- Relevancy & Multi-Facet Filter Modal -->
     <div id="modal-filter" class="modal-overlay hidden">
       <div class="modal modal-filter">
         <div class="modal-header">
@@ -1252,7 +1321,7 @@
             >
               <polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3" />
             </svg>
-            Filter by Relevancy
+            Filter Patents
           </h3>
           <button
             id="btn-close-filter"
@@ -1272,56 +1341,135 @@
         </div>
         <div class="filter-body">
           <p class="filter-description">
-            Select which relevancy categories to include in the export. Only
-            patents matching your selection will be downloaded.
+            Narrow down history and exports by relevancy, AI audit status, deep scrape completion, and search source.
           </p>
-          <div class="filter-options">
-            <label class="filter-option filter-option--red">
-              <input
-                type="checkbox"
-                name="filter-relevancy"
-                value="Red"
-                id="filter-red"
-              />
-              <span class="filter-dot filter-dot--red"></span>
-              <div class="filter-option-text">
-                <strong>Closely Relevant</strong>
-                <span>Covers most or all of the core inventive concept</span>
-              </div>
-            </label>
-            <label class="filter-option filter-option--yellow">
-              <input
-                type="checkbox"
-                name="filter-relevancy"
-                value="Yellow"
-                id="filter-yellow"
-              />
-              <span class="filter-dot filter-dot--yellow"></span>
-              <div class="filter-option-text">
-                <strong>Mildly Relevant</strong>
-                <span>Discloses some elements or overlapping subsystems</span>
-              </div>
-            </label>
-            <label class="filter-option filter-option--green">
-              <input
-                type="checkbox"
-                name="filter-relevancy"
-                value="Green"
-                id="filter-green"
-              />
-              <span class="filter-dot filter-dot--green"></span>
-              <div class="filter-option-text">
-                <strong>Not Relevant</strong>
-                <span>Unrelated or only superficial keyword overlap</span>
-              </div>
-            </label>
+
+          <!-- Section 1: Relevancy Category -->
+          <div class="filter-section">
+            <h4 class="filter-section-title">
+              <svg class="icon-xs" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 8v4M12 16h.01"/></svg>
+              Relevancy Category
+            </h4>
+            <div class="filter-options">
+              <label class="filter-option filter-option--red">
+                <input
+                  type="checkbox"
+                  name="filter-relevancy"
+                  value="Red"
+                  id="filter-red"
+                />
+                <span class="filter-dot filter-dot--red"></span>
+                <div class="filter-option-text">
+                  <strong>Closely Relevant (Red)</strong>
+                  <span>Covers most or all of the core inventive concept</span>
+                </div>
+              </label>
+              <label class="filter-option filter-option--yellow">
+                <input
+                  type="checkbox"
+                  name="filter-relevancy"
+                  value="Yellow"
+                  id="filter-yellow"
+                />
+                <span class="filter-dot filter-dot--yellow"></span>
+                <div class="filter-option-text">
+                  <strong>Mildly Relevant (Yellow)</strong>
+                  <span>Discloses some elements or overlapping subsystems</span>
+                </div>
+              </label>
+              <label class="filter-option filter-option--green">
+                <input
+                  type="checkbox"
+                  name="filter-relevancy"
+                  value="Green"
+                  id="filter-green"
+                />
+                <span class="filter-dot filter-dot--green"></span>
+                <div class="filter-option-text">
+                  <strong>Not Relevant (Green)</strong>
+                  <span>Unrelated or only superficial keyword overlap</span>
+                </div>
+              </label>
+              <label class="filter-option filter-option--unaudited">
+                <input
+                  type="checkbox"
+                  name="filter-relevancy"
+                  value="Unaudited"
+                  id="filter-unaudited"
+                />
+                <span class="filter-dot filter-dot--unaudited"></span>
+                <div class="filter-option-text">
+                  <strong>Pending Audit</strong>
+                  <span>Not yet evaluated by AI audit agent</span>
+                </div>
+              </label>
+            </div>
           </div>
+
+          <!-- Section 2: AI Audit Status -->
+          <div class="filter-section">
+            <h4 class="filter-section-title">
+              <svg class="icon-xs" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2a10 10 0 1 0 10 10A10 10 0 0 0 12 2zm1 15h-2v-2h2zm0-4h-2V7h2z"/></svg>
+              AI Audit Status
+            </h4>
+            <div class="filter-chips-grid">
+              <label class="filter-chip">
+                <input type="checkbox" name="filter-ai-audit" value="audited" id="filter-ai-audited">
+                <span class="chip-label">✨ AI Audited</span>
+              </label>
+              <label class="filter-chip">
+                <input type="checkbox" name="filter-ai-audit" value="not_audited" id="filter-ai-not-audited">
+                <span class="chip-label">⏳ Not AI Audited</span>
+              </label>
+            </div>
+          </div>
+
+          <!-- Section 3: Deep Scrape Status -->
+          <div class="filter-section">
+            <h4 class="filter-section-title">
+              <svg class="icon-xs" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+              Deep Scrape Status
+            </h4>
+            <div class="filter-chips-grid">
+              <label class="filter-chip">
+                <input type="checkbox" name="filter-deep-scrape" value="scraped" id="filter-deep-scraped">
+                <span class="chip-label">📄 Deep Scraped</span>
+              </label>
+              <label class="filter-chip">
+                <input type="checkbox" name="filter-deep-scrape" value="not_scraped" id="filter-deep-not-scraped">
+                <span class="chip-label">⚡ Not Deep Scraped</span>
+              </label>
+            </div>
+          </div>
+
+          <!-- Section 4: Source Platform -->
+          <div class="filter-section">
+            <h4 class="filter-section-title">
+              <svg class="icon-xs" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M2 12h20"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>
+              Source Platform
+            </h4>
+            <div class="filter-chips-grid filter-chips-grid--3">
+              <label class="filter-chip">
+                <input type="checkbox" name="filter-source" value="google" id="filter-src-google">
+                <span class="chip-label">🌐 Google Patents</span>
+              </label>
+              <label class="filter-chip">
+                <input type="checkbox" name="filter-source" value="india" id="filter-src-india">
+                <span class="chip-label">🇮🇳 India Patents</span>
+              </label>
+              <label class="filter-chip">
+                <input type="checkbox" name="filter-source" value="espacenet" id="filter-src-espacenet">
+                <span class="chip-label">🇪🇺 Espacenet</span>
+              </label>
+            </div>
+          </div>
+
           <div class="filter-actions">
             <button type="button" id="btn-filter-reset" class="btn-secondary">
-              Reset Filter
+              Reset All Filters
             </button>
             <button type="button" id="btn-filter-apply" class="btn-primary">
-              Apply Filter
+              Apply Filters
             </button>
           </div>
         </div>

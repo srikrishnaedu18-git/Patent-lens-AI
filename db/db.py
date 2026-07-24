@@ -212,7 +212,7 @@ def verify_user(username: str, password: str) -> dict:
     cursor = conn.cursor()
     pwd_hash = hash_password(password)
     cursor.execute(
-        "SELECT id, username FROM users WHERE username = %s AND password_hash = %s;" if get_database_backend() == "postgres" else "SELECT id, username FROM users WHERE username = ? AND password_hash = ?;",
+        "SELECT id, username FROM users WHERE LOWER(username) = LOWER(%s) AND password_hash = %s;" if get_database_backend() == "postgres" else "SELECT id, username FROM users WHERE LOWER(username) = LOWER(?) AND password_hash = ?;",
         (username, pwd_hash),
     )
     row = cursor.fetchone()

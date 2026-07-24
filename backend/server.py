@@ -1310,7 +1310,7 @@ async def stream_task(task_id: str, user_id: int = Depends(get_current_user_id))
 CSV_CELL_SAFE_LIMIT = 30000
 DEEP_SCRAPE_FIELD_PREFIX = "deep_scrape_text_part_"
 
-EXPORT_FIELDS = ["source", "patent_id", "keywords", "title", "relevancy", "abstract", "url",
+EXPORT_FIELDS = ["serial_number", "source", "patent_id", "keywords", "title", "relevancy", "abstract", "url",
                  "deep_scraped_at", "confidence_score", "ai_reasoning",
                  "overlap_reasons", "difference_reasons"]
 
@@ -1405,7 +1405,8 @@ def export_project_csv(project_id: int, req: ExportRequest = None, user_id: int 
     output = io.StringIO()
     writer = csv.DictWriter(output, fieldnames=fieldnames, extrasaction="ignore")
     writer.writeheader()
-    for p in patents:
+    for serial, p in enumerate(patents, start=1):
+        p["serial_number"] = serial
         row = {f: p.get(f, "") for f in EXPORT_FIELDS}
         for index, chunk in enumerate(_chunk_csv_cell(p.get("deep_scrape_text", "")), start=1):
             row[f"{DEEP_SCRAPE_FIELD_PREFIX}{index}"] = chunk

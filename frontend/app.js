@@ -29,7 +29,14 @@ let state = {
   auditMode: "sequential",
   searchSources: ["google"],
   aiResponse: null,
-  activeFilter: [], // e.g. ["Red", "Yellow"]
+  activeFilter: [], // e.g. ["Red", "Yellow"] (backward compatibility)
+  filters: {
+    relevancy: [],   // ["Red", "Yellow", "Green", "Unaudited"]
+    aiAudit: [],     // ["audited", "not_audited"]
+    deepScrape: [],  // ["scraped", "not_scraped"]
+    source: [],      // ["google", "india", "espacenet"]
+  },
+  searchQuery: "",
   activeRequirement: "", // stored requirement text for re-auditing
   lastScrapedSearchId: null,
   lastScrapedKeywords: "",
@@ -176,6 +183,15 @@ const elBtnRelevancyFilter = document.getElementById("btn-relevancy-filter");
 const elBtnCloseFilter = document.getElementById("btn-close-filter");
 const elBtnFilterApply = document.getElementById("btn-filter-apply");
 const elBtnFilterReset = document.getElementById("btn-filter-reset");
+
+// In-Page Patent Search Bar elements
+const elBtnToggleSearch = document.getElementById("btn-toggle-search");
+const elSearchBarContainer = document.getElementById("search-bar-container");
+const elInputPatentSearch = document.getElementById("input-patent-search");
+const elSearchMatchCount = document.getElementById("search-match-count");
+const elSearchSelectAllWrap = document.getElementById("search-select-all-wrap");
+const elSearchSelectAllCb = document.getElementById("search-select-all-cb");
+const elBtnClearSearch = document.getElementById("btn-clear-search");
 
 const elModalSavedKeywords = document.getElementById("modal-saved-keywords");
 const elBtnCloseKeywords = document.getElementById("btn-close-keywords");
@@ -1449,11 +1465,78 @@ async function loadProjectHistory(projectId) {
   }
 }
 
+function matchesFilters(patent, search) {
+  const f = state.filters || {};
+
+  // 1. Relevancy Category
+  if (f.relevancy && f.relevancy.length > 0) {
+    const patentRelevancy = scoreToRelevancy(patent.confidence_score);
+    if (!f.relevancy.includes(patentRelevancy)) return false;
+  }
+
+  // 2. AI Audit Status
+  if (f.aiAudit && f.aiAudit.length > 0) {
+    const isAudited = Boolean(
+      patent.ai_reasoning ||
+        (patent.confidence_score !== null && patent.confidence_score !== undefined)
+    );
+    const statusStr = isAudited ? "audited" : "not_audited";
+    if (!f.aiAudit.includes(statusStr)) return false;
+  }
+
+  // 3. Deep Scrape Status
+  if (f.deepScrape && f.deepScrape.length > 0) {
+    const isScraped = Boolean(patent.deep_scrape_text || patent.deep_scraped_at);
+    const statusStr = isScraped ? "scraped" : "not_scraped";
+    if (!f.deepScrape.includes(statusStr)) return false;
+  }
+
+  // 4. Source Platform
+  if (f.source && f.source.length > 0) {
+    const rawSource = ((search && search.search_source) || patent.source || "google").toLowerCase();
+    let normalizedSource = "google";
+    if (rawSource.includes("india") || rawSource.includes("in")) normalizedSource = "india";
+    else if (rawSource.includes("espa") || rawSource.includes("epo")) normalizedSource = "espacenet";
+    else if (rawSource.includes("google") || rawSource.includes("uspto")) normalizedSource = "google";
+
+    if (!f.source.includes(normalizedSource)) return false;
+  }
+
+  return true;
+}
+
+function matchesSearchQuery(patent, search, queryStr) {
+  if (!queryStr) return true;
+  const q = queryStr.toLowerCase();
+  const fields = [
+    patent.patent_id || "",
+    patent.title || "",
+    patent.abstract || "",
+    search ? search.query || "" : "",
+    patent.ai_reasoning || "",
+    patent.overlap_reasons || "",
+    patent.difference_reasons || "",
+    patent.deep_scrape_text || "",
+  ];
+  return fields.some((field) => field.toLowerCase().includes(q));
+}
+
+function hasActiveFilters() {
+  const f = state.filters || {};
+  return (
+    (f.relevancy && f.relevancy.length > 0) ||
+    (f.aiAudit && f.aiAudit.length > 0) ||
+    (f.deepScrape && f.deepScrape.length > 0) ||
+    (f.source && f.source.length > 0)
+  );
+}
+
 function renderHistory(searches) {
   elHistoryContainer.innerHTML = "";
-  state.historySearches = searches || [];
+  if (searches) state.historySearches = searches;
+  const allSearches = searches || state.historySearches || [];
 
-  const activeSearches = (searches || []).filter(
+  const activeSearches = allSearches.filter(
     (s) => s.search_mode !== "failed",
   );
 
@@ -1463,10 +1546,101 @@ function renderHistory(searches) {
         No prior art searches recorded for this project yet.
       </div>
     `;
+    if (elSearchMatchCount) elSearchMatchCount.classList.add("hidden");
     return;
   }
 
+  // Pre-calculate continuous 1-indexed serial numbers for ALL patents
+  let serialCounter = 1;
+  const patentMap = []; // [{ patent, search, serial }]
+
   activeSearches.forEach((s) => {
+    (s.patents || []).forEach((p) => {
+      patentMap.push({ patent: p, search: s, serial: serialCounter++ });
+    });
+  });
+
+  const queryStr = (state.searchQuery || "").trim();
+
+  // If IN-PAGE SEARCH is active:
+  if (queryStr) {
+    const matchingItems = patentMap.filter(({ patent, search }) =>
+      matchesFilters(patent, search) && matchesSearchQuery(patent, search, queryStr)
+    );
+
+    if (elSearchMatchCount) {
+      elSearchMatchCount.textContent = `${matchingItems.length} match${matchingItems.length === 1 ? "" : "es"}`;
+      elSearchMatchCount.classList.remove("hidden");
+    }
+
+    if (elSearchSelectAllWrap) {
+      if (matchingItems.length > 0) {
+        elSearchSelectAllWrap.classList.remove("hidden");
+      } else {
+        elSearchSelectAllWrap.classList.add("hidden");
+      }
+    }
+
+    if (matchingItems.length === 0) {
+      if (elSearchSelectAllCb) elSearchSelectAllCb.checked = false;
+      elHistoryContainer.innerHTML = `
+        <div class="meta-text" style="padding: 40px; text-align: center; background: var(--bg-secondary); border-radius: var(--radius-lg); border: 1px dashed var(--border-color);">
+          No patents found matching <strong>"${escapeHtml(queryStr)}"</strong>.
+        </div>
+      `;
+      return;
+    }
+
+    const cardContainer = document.createElement("div");
+    cardContainer.className = "query-card open";
+    cardContainer.innerHTML = `
+      <div class="query-card-header" style="cursor: default;">
+        <div class="query-title-info">
+          <input type="checkbox" class="keyword-select-checkbox" title="Select all search results">
+          <span class="query-tag ai-tag">Search Results</span>
+          <span class="query-text">Matching "${escapeHtml(queryStr)}"</span>
+          <span class="serial-range-badge">${matchingItems.length} patents</span>
+        </div>
+      </div>
+      <div class="query-card-body">
+        <div class="patent-list">
+          ${renderPatentCardsList(matchingItems, queryStr)}
+        </div>
+      </div>
+    `;
+
+    bindCardEventListeners(cardContainer);
+    elHistoryContainer.appendChild(cardContainer);
+
+    // Sync search bar Select All checkbox state
+    if (elSearchSelectAllCb) {
+      const childCbs = cardContainer.querySelectorAll(".patent-select-checkbox");
+      const allChecked = childCbs.length > 0 && Array.from(childCbs).every((cb) => cb.checked);
+      elSearchSelectAllCb.checked = allChecked;
+    }
+
+    return;
+  }
+
+  // STANDARD / FILTERED GROUPED VIEW
+  if (elSearchMatchCount) elSearchMatchCount.classList.add("hidden");
+  if (elSearchSelectAllWrap) elSearchSelectAllWrap.classList.add("hidden");
+  if (elSearchSelectAllCb) elSearchSelectAllCb.checked = false;
+
+  let globalSerial = 1;
+
+  activeSearches.forEach((s) => {
+    const groupPatents = (s.patents || []).filter((p) => matchesFilters(p, s));
+    const patentsCount = (s.patents || []).length;
+    const endSerial = globalSerial + patentsCount - 1;
+    const rangeBadge = patentsCount > 0 ? `<span class="serial-range-badge" title="Absolute Serial Number Range">#${globalSerial} - #${endSerial}</span>` : "";
+
+    // If filters active and zero matching patents in this group, skip group
+    if (hasActiveFilters() && groupPatents.length === 0) {
+      globalSerial += patentsCount;
+      return;
+    }
+
     const card = document.createElement("div");
     card.className = "query-card";
     card.id = `query-card-${s.id}`;
@@ -1483,6 +1657,7 @@ function renderHistory(searches) {
           <input type="checkbox" class="keyword-select-checkbox" data-search-id="${s.id}" title="Select all patents in this group">
           <span class="query-tag ${isAi ? "ai-tag" : "manual-tag"}">${isAi ? "AI Pipeline" : "Keyword"}</span>
           <span class="query-text" title="${escapeHtml(s.query)}">${escapeHtml(s.query)}</span>
+          ${rangeBadge}
           <span class="meta-text">${dateStr}</span>
         </div>
         <div class="query-actions-wrapper">
@@ -1496,63 +1671,181 @@ function renderHistory(searches) {
       <div class="query-card-body">
         ${isAi ? renderAiSearchMeta(s) : ""}
         <div class="patent-list">
-          ${renderPatentCards(s.patents, s.query, s.id)}
+          ${renderPatentCardsList(
+            groupPatents.map((p) => ({
+              patent: p,
+              search: s,
+              serial: globalSerial + (s.patents || []).indexOf(p),
+            })),
+            s.query,
+          )}
         </div>
       </div>
     `;
 
-    const headerCheckbox = card.querySelector(".keyword-select-checkbox");
+    globalSerial += patentsCount;
+    bindCardEventListeners(card);
+    elHistoryContainer.appendChild(card);
+  });
+}
+
+function bindCardEventListeners(card) {
+  const headerCheckbox = card.querySelector(".keyword-select-checkbox");
+  if (headerCheckbox) {
     headerCheckbox.addEventListener("click", (e) => {
       e.stopPropagation();
       const isChecked = headerCheckbox.checked;
       card.querySelectorAll(".patent-select-checkbox").forEach((cb) => {
         cb.checked = isChecked;
-        // trigger handler to enforce active filter validation if user manually selects all
         if (isChecked) handlePatentCheckboxChange(cb);
       });
       updateGlobalSelectAllState();
     });
+  }
 
-    const childCheckboxes = card.querySelectorAll(".patent-select-checkbox");
-    childCheckboxes.forEach((cb) => {
-      cb.addEventListener("change", () => {
+  const childCheckboxes = card.querySelectorAll(".patent-select-checkbox");
+  childCheckboxes.forEach((cb) => {
+    cb.addEventListener("change", () => {
+      if (headerCheckbox) {
         const allChecked = Array.from(childCheckboxes).every((c) => c.checked);
         headerCheckbox.checked = allChecked;
-        updateGlobalSelectAllState();
-      });
+      }
+      updateGlobalSelectAllState();
     });
-
-    card.querySelectorAll(".btn-card-deep-scrape").forEach((btn) => {
-      btn.addEventListener("click", (e) => {
-        e.stopPropagation();
-        triggerDeepScrape([parseInt(btn.dataset.patentId, 10)]);
-      });
-    });
-
-    card.querySelectorAll(".patent-card").forEach((patentCard) => {
-      patentCard.addEventListener("click", (e) => {
-        if (
-          e.target.closest(".patent-select-checkbox") ||
-          e.target.closest(".patent-id-badge") ||
-          e.target.closest(".btn-card-deep-scrape")
-        ) {
-          return;
-        }
-        openPatentDetails(parseInt(patentCard.dataset.patentId, 10));
-      });
-    });
-
-    card.querySelector(".query-card-header").addEventListener("click", (e) => {
-      if (e.target.closest(".keyword-select-checkbox"))
-        return;
-      const isOpen = card.classList.toggle("open");
-      card.querySelector(".chevron").style.transform = isOpen
-        ? "rotate(180deg)"
-        : "rotate(0deg)";
-    });
-
-    elHistoryContainer.appendChild(card);
   });
+
+  card.querySelectorAll(".btn-card-deep-scrape").forEach((btn) => {
+    btn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      triggerDeepScrape([parseInt(btn.dataset.patentId, 10)]);
+    });
+  });
+
+  card.querySelectorAll(".patent-card").forEach((patentCard) => {
+    patentCard.addEventListener("click", (e) => {
+      if (
+        e.target.closest(".patent-select-checkbox") ||
+        e.target.closest(".patent-id-badge") ||
+        e.target.closest(".btn-card-deep-scrape")
+      ) {
+        return;
+      }
+      openPatentDetails(parseInt(patentCard.dataset.patentId, 10));
+    });
+  });
+
+  const header = card.querySelector(".query-card-header");
+  if (header) {
+    header.addEventListener("click", (e) => {
+      if (e.target.closest(".keyword-select-checkbox")) return;
+      const isOpen = card.classList.toggle("open");
+      const chevron = card.querySelector(".chevron");
+      if (chevron) {
+        chevron.style.transform = isOpen ? "rotate(180deg)" : "rotate(0deg)";
+      }
+    });
+  }
+}
+
+function renderPatentCardsList(items, query) {
+  if (items.length === 0) {
+    return `<div class="meta-text" style="text-align: center; padding: 20px;">No patents matched this criteria.</div>`;
+  }
+
+  const terms = (query || "")
+    .split(/\s+/)
+    .map((t) => escapeRegExp(t))
+    .filter((t) => t.length > 2);
+  const highlight = (text) => {
+    if (terms.length === 0) return escapeHtml(text || "");
+    const regex = new RegExp(`(${terms.join("|")})`, "gi");
+    return escapeHtml(text || "").replace(
+      regex,
+      `<mark class="term-highlight">$1</mark>`,
+    );
+  };
+
+  return items
+    .map(({ patent: p, search: s, serial }) => {
+      const score = p.confidence_score;
+      const relevancy = scoreToRelevancy(score);
+      const cardClass = `patent-card relevancy-${relevancy.toLowerCase()}`;
+      const isDeepScraped = Boolean(p.deep_scrape_text);
+      const searchId = s ? s.id : "";
+
+      // Build structured reasoning HTML
+      let reasoningHtml = "";
+      const hasOverlap = p.overlap_reasons && p.overlap_reasons.trim();
+      const hasDifference = p.difference_reasons && p.difference_reasons.trim();
+      const hasBasicReasoning = p.ai_reasoning && p.ai_reasoning.trim();
+
+      if (hasBasicReasoning || hasOverlap || hasDifference) {
+        reasoningHtml = `<div class="ai-reasoning-callout">`;
+
+        if (hasBasicReasoning) {
+          reasoningHtml += `
+          <div class="reasoning-header">🤖 Gemini Assessment</div>
+          <div style="color: var(--text-secondary); font-style: italic;">${escapeHtml(p.ai_reasoning)}</div>`;
+        }
+
+        if (hasOverlap) {
+          reasoningHtml += `
+          <div class="ai-reasoning-section overlap-section">
+            <div class="section-label">🔴 Why It Overlaps With Your Invention</div>
+            <div class="section-text">${escapeHtml(p.overlap_reasons)}</div>
+          </div>`;
+        }
+
+        if (hasDifference) {
+          reasoningHtml += `
+          <div class="ai-reasoning-section difference-section">
+            <div class="section-label">🟢 How Your Invention Differs</div>
+            <div class="section-text">${escapeHtml(p.difference_reasons)}</div>
+          </div>`;
+        }
+
+        reasoningHtml += `</div>`;
+      }
+
+      return `
+      <div class="${cardClass}" id="patent-card-${p.id}" data-patent-id="${p.id}" data-serial="${serial}" data-relevancy="${relevancy}">
+        <input type="checkbox" class="patent-select-checkbox" data-patent-id="${p.id}"
+               data-search-id="${searchId}" data-relevancy="${relevancy}" title="Select patent"
+               onchange="handlePatentCheckboxChange(this)">
+        <div class="patent-card-content">
+          <div class="patent-card-header">
+            <div class="patent-title-line">
+              <span class="patent-serial-badge" title="Absolute Serial Number #${serial}">#${serial}</span>
+              <a href="${escapeHtml(p.url || "#")}" target="_blank" class="patent-id-badge" title="Open patent">
+                ${escapeHtml(p.patent_id || "Patent")}
+                <svg style="width:12px;height:12px" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6M15 3h6v6M10 14L21 3"/></svg>
+              </a>
+              <h4 class="patent-title">${highlight(p.title || "Untitled Patent")}</h4>
+            </div>
+            <button type="button" class="btn-card-deep-scrape ${isDeepScraped ? "btn-card-deep-scrape--done" : "btn-card-deep-scrape--pending"}" data-patent-id="${p.id}" title="${isDeepScraped ? "Refresh deep scrape" : "Deep scrape this patent"}">
+              ${isDeepScraped ? "Deep scraped" : "Deep scrape"}
+            </button>
+            <span class="relevancy-badge relevancy-badge--${relevancy.toLowerCase()}">${relevancy}</span>
+          </div>
+          <p class="patent-abstract">${highlight(p.abstract || "")}</p>
+          ${reasoningHtml}
+        </div>
+      </div>
+    `;
+    })
+    .join("");
+}
+
+function renderPatentCards(patents, query, searchId, startSerial = 1) {
+  const s = state.historySearches.find((item) => item.id === searchId);
+  return renderPatentCardsList(
+    (patents || []).map((p, idx) => ({
+      patent: p,
+      search: s,
+      serial: startSerial + idx,
+    })),
+    query,
+  );
 }
 
 function renderAiSearchMeta(s) {
@@ -1585,7 +1878,7 @@ function renderAiSearchMeta(s) {
   `;
 }
 
-function renderPatentCards(patents, query, searchId) {
+function renderPatentCards(patents, query, searchId, startSerial = 1) {
   if (patents.length === 0) {
     return `<div class="meta-text" style="text-align: center; padding: 20px;">No patents matched this criteria.</div>`;
   }
@@ -1604,7 +1897,8 @@ function renderPatentCards(patents, query, searchId) {
   };
 
   return patents
-    .map((p) => {
+    .map((p, idx) => {
+      const serial = startSerial + idx;
       const score = p.confidence_score;
       const relevancy = scoreToRelevancy(score);
       const cardClass = `patent-card relevancy-${relevancy.toLowerCase()}`;
@@ -1645,13 +1939,14 @@ function renderPatentCards(patents, query, searchId) {
       }
 
       return `
-      <div class="${cardClass}" id="patent-card-${p.id}" data-patent-id="${p.id}" data-relevancy="${relevancy}">
+      <div class="${cardClass}" id="patent-card-${p.id}" data-patent-id="${p.id}" data-serial="${serial}" data-relevancy="${relevancy}">
         <input type="checkbox" class="patent-select-checkbox" data-patent-id="${p.id}"
                data-search-id="${searchId}" data-relevancy="${relevancy}" title="Select patent"
                onchange="handlePatentCheckboxChange(this)">
         <div class="patent-card-content">
           <div class="patent-card-header">
             <div class="patent-title-line">
+              <span class="patent-serial-badge" title="Absolute Serial Number #${serial}">#${serial}</span>
               <a href="${escapeHtml(p.url)}" target="_blank" class="patent-id-badge" title="Open patent">
                 ${escapeHtml(p.patent_id)}
                 <svg style="width:12px;height:12px" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6M15 3h6v6M10 14L21 3"/></svg>
@@ -1710,9 +2005,26 @@ function handlePatentCheckboxChange(cb) {
 function findPatentById(patentId) {
   for (const search of state.historySearches || []) {
     for (const patent of search.patents || []) {
-      if (parseInt(patent.id, 10) === patentId) {
+      if (parseInt(patent.id, 10) === parseInt(patentId, 10)) {
         return { patent, search };
       }
+    }
+  }
+  return null;
+}
+
+function getPatentSerial(patentId) {
+  if (!state.historySearches) return null;
+  let counter = 1;
+  const activeSearches = state.historySearches.filter(
+    (s) => s.search_mode !== "failed"
+  );
+  for (const search of activeSearches) {
+    for (const p of search.patents || []) {
+      if (parseInt(p.id, 10) === parseInt(patentId, 10)) {
+        return counter;
+      }
+      counter++;
     }
   }
   return null;
@@ -1723,6 +2035,8 @@ function openPatentDetails(patentId) {
   if (!found || !elModalPatentDetails || !elPatentDetailsBody) return;
 
   const { patent, search } = found;
+  const serial = getPatentSerial(patent.id);
+  const serialBadge = serial ? `<span class="patent-serial-badge" title="Absolute Serial Number #${serial}">#${serial}</span>` : "";
   const relevancy = scoreToRelevancy(patent.confidence_score);
   const deepText = patent.deep_scrape_text || "";
   const scrapedAt = patent.deep_scraped_at
@@ -1730,12 +2044,12 @@ function openPatentDetails(patentId) {
     : "";
 
   if (elPatentDetailsTitle) {
-    elPatentDetailsTitle.textContent = patent.patent_id || "Patent Details";
+    elPatentDetailsTitle.textContent = (serial ? `#${serial} - ` : "") + (patent.patent_id || "Patent Details");
   }
 
   elPatentDetailsBody.innerHTML = `
     <div class="patent-detail-meta">
-      <a href="${escapeHtml(patent.url || "#")}" target="_blank" class="patent-id-badge patent-detail-id-link" title="Open patent">
+      ${serialBadge}
         ${escapeHtml(patent.patent_id || "Patent")}
         <svg style="width:12px;height:12px" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6M15 3h6v6M10 14L21 3"/></svg>
       </a>
@@ -2259,15 +2573,50 @@ async function showSavedKeywordsModal() {
   }
 }
 
-// ── Relevancy Filter Modal ───────────────────────────────────────────────────
+// ── In-Page Search & Multi-Facet Filter Modal ───────────────────────────────
+function toggleSearchBar() {
+  if (!elSearchBarContainer) return;
+  const isHidden = elSearchBarContainer.classList.contains("hidden");
+  if (isHidden) {
+    elSearchBarContainer.classList.remove("hidden");
+    if (elBtnToggleSearch) elBtnToggleSearch.classList.add("active");
+    if (elInputPatentSearch) elInputPatentSearch.focus();
+  } else {
+    elSearchBarContainer.classList.add("hidden");
+    if (elBtnToggleSearch) elBtnToggleSearch.classList.remove("active");
+    clearSearch();
+  }
+}
+
+function handleSearchInput() {
+  if (!elInputPatentSearch) return;
+  state.searchQuery = elInputPatentSearch.value.trim();
+  renderHistory();
+}
+
+function clearSearch() {
+  if (elInputPatentSearch) elInputPatentSearch.value = "";
+  state.searchQuery = "";
+  if (elSearchMatchCount) elSearchMatchCount.classList.add("hidden");
+  renderHistory();
+}
+
 function showFilterModal() {
   elModalFilter.classList.remove("hidden");
   // Pre-fill checkboxes based on active state
-  const checkboxes = elModalFilter.querySelectorAll(
-    'input[name="filter-relevancy"]',
-  );
-  checkboxes.forEach((cb) => {
-    cb.checked = state.activeFilter.includes(cb.value);
+  const f = state.filters || {};
+  
+  elModalFilter.querySelectorAll('input[name="filter-relevancy"]').forEach((cb) => {
+    cb.checked = (f.relevancy || []).includes(cb.value);
+  });
+  elModalFilter.querySelectorAll('input[name="filter-ai-audit"]').forEach((cb) => {
+    cb.checked = (f.aiAudit || []).includes(cb.value);
+  });
+  elModalFilter.querySelectorAll('input[name="filter-deep-scrape"]').forEach((cb) => {
+    cb.checked = (f.deepScrape || []).includes(cb.value);
+  });
+  elModalFilter.querySelectorAll('input[name="filter-source"]').forEach((cb) => {
+    cb.checked = (f.source || []).includes(cb.value);
   });
 }
 
@@ -2276,47 +2625,42 @@ function hideFilterModal() {
 }
 
 function applyFilter() {
-  const checkboxes = elModalFilter.querySelectorAll(
-    'input[name="filter-relevancy"]:checked',
-  );
-  state.activeFilter = Array.from(checkboxes).map((cb) => cb.value);
+  const getChecked = (name) =>
+    Array.from(elModalFilter.querySelectorAll(`input[name="${name}"]:checked`)).map((cb) => cb.value);
+
+  state.filters = {
+    relevancy: getChecked("filter-relevancy"),
+    aiAudit: getChecked("filter-ai-audit"),
+    deepScrape: getChecked("filter-deep-scrape"),
+    source: getChecked("filter-source"),
+  };
+
+  // Backward compatibility for export filter logic
+  state.activeFilter = state.filters.relevancy;
 
   // Update filter button appearance
-  if (state.activeFilter.length > 0) {
+  if (hasActiveFilters()) {
     elBtnRelevancyFilter.classList.add("active");
   } else {
     elBtnRelevancyFilter.classList.remove("active");
   }
 
-  // Checkbox validation: Uncheck selected patents outside the active filter
-  if (state.activeFilter.length > 0) {
-    const checkedPatents = document.querySelectorAll(
-      ".patent-select-checkbox:checked",
-    );
-    checkedPatents.forEach((cb) => {
-      const cardRelevancy = cb.dataset.relevancy || "Unaudited";
-      if (!state.activeFilter.includes(cardRelevancy)) {
-        cb.checked = false;
-        // Uncheck header checkbox too
-        const card = cb.closest(".query-card");
-        if (card) {
-          const headerCb = card.querySelector(".keyword-select-checkbox");
-          if (headerCb) headerCb.checked = false;
-        }
-      }
-    });
-  }
-
+  renderHistory();
   hideFilterModal();
 }
 
 function resetFilter() {
+  state.filters = {
+    relevancy: [],
+    aiAudit: [],
+    deepScrape: [],
+    source: [],
+  };
   state.activeFilter = [];
-  elBtnRelevancyFilter.classList.remove("active");
-  const checkboxes = elModalFilter.querySelectorAll(
-    'input[name="filter-relevancy"]',
-  );
-  checkboxes.forEach((cb) => (cb.checked = false));
+  if (elBtnRelevancyFilter) elBtnRelevancyFilter.classList.remove("active");
+
+  elModalFilter.querySelectorAll('input[type="checkbox"]').forEach((cb) => (cb.checked = false));
+  renderHistory();
   hideFilterModal();
 }
 
@@ -2451,6 +2795,32 @@ function setupEventListeners() {
     if (e.target === elModalSavedKeywords)
       elModalSavedKeywords.classList.add("hidden");
   });
+
+  // In-Page Patent Search Bar
+  if (elBtnToggleSearch) {
+    elBtnToggleSearch.addEventListener("click", toggleSearchBar);
+  }
+  if (elInputPatentSearch) {
+    elInputPatentSearch.addEventListener("input", handleSearchInput);
+  }
+  if (elBtnClearSearch) {
+    elBtnClearSearch.addEventListener("click", clearSearch);
+  }
+  if (elSearchSelectAllCb) {
+    elSearchSelectAllCb.addEventListener("change", () => {
+      const isChecked = elSearchSelectAllCb.checked;
+      const patentCbs = elHistoryContainer.querySelectorAll(".patent-select-checkbox");
+      patentCbs.forEach((cb) => {
+        cb.checked = isChecked;
+        if (isChecked && typeof handlePatentCheckboxChange === "function") {
+          handlePatentCheckboxChange(cb);
+        }
+      });
+      if (typeof updateGlobalSelectAllState === "function") {
+        updateGlobalSelectAllState();
+      }
+    });
+  }
 
   // Relevancy Filter Modal
   if (elBtnRelevancyFilter) {
