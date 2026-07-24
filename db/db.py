@@ -72,7 +72,9 @@ def insert_and_get_id(cursor, statement: str, params=()):
             statement = f"{statement} RETURNING id"
         cursor.execute(statement, params)
         row = cursor.fetchone()
-        return row[0] if row else None
+        if not row:
+            return None
+        return row["id"] if isinstance(row, dict) else row[0]
 
     cursor.execute(statement, params)
     return cursor.lastrowid
