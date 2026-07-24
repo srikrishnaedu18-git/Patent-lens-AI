@@ -144,6 +144,70 @@ def auth_logout(response: Response, session_token: str = Cookie(None)):
     response.delete_cookie(key="session_token")
     return {"status": "success", "message": "Logged out"}
 
+
+# ── Health Check ──────────────────────────────────────────────────────────────
+@app.get("/api/health")
+def health_check():
+    """
+    Public endpoint — checks DB connectivity, table presence, and env config.
+    Visit /api/health on your Render deployment to diagnose connection issues.
+    """
+    import os
+    from db import get_db_connection, get_database_backend, get_database_url
+
+    result = {
+        "status": "ok",
+        "backend": get_database_backend(),
+        "database_url_set": bool(os.environ.get("DATABASE_URL")),
+        "database_url_preview": None,
+        "db_connect": False,
+        "tables": [],
+        "env": {
+            "ENV": os.environ.get("ENV", "not set"),
+            "HOST": os.environ.get("HOST", "not set"),
+            "PORT": os.environ.get("PORT", "not set"),
+            "GEMINI_API_KEY": "set" if os.environ.get("GEMINI_API_KEY") else "MISSING",
+            "GEMINI_API_KEY1": "set" if os.environ.get("GEMINI_API_KEY1") else "MISSING",
+            "TWO_CAPTCHA_API_KEY": "set" if os.environ.get("TWO_CAPTCHA_API_KEY") else "MISSING",
+            "INDIA_PATENT_HEADLESS": os.environ.get("INDIA_PATENT_HEADLESS", "not set"),
+        },
+        "error": None,
+    }
+
+    # Mask the DB URL — show only the host part, not the password
+    raw_url = os.environ.get("DATABASE_URL", "")
+    if raw_url:
+        try:
+            from urllib.parse import urlparse
+            parsed = urlparse(raw_url)
+            result["database_url_preview"] = f"{parsed.scheme}://***@{parsed.hostname}/{parsed.path.lstrip('/')}"
+        except Exception:
+            result["database_url_preview"] = "(parse error)"
+
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        backend = get_database_backend()
+
+        if backend == "postgres":
+            cur.execute("""
+                SELECT table_name FROM information_schema.tables
+                WHERE table_schema = 'public'
+                ORDER BY table_name
+            """)
+        else:
+            cur.execute("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name")
+
+        rows = cur.fetchall()
+        result["tables"] = [row[0] for row in rows]
+        result["db_connect"] = True
+        conn.close()
+    except Exception as e:
+        result["status"] = "error"
+        result["error"] = str(e)
+
+    return result
+
 @app.get("/api/auth/me")
 def auth_me(session_token: str = Cookie(None)):
     user_id = get_user_id_by_session(session_token)
