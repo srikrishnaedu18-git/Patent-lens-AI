@@ -203,8 +203,11 @@ def health_check():
         result["db_connect"] = True
         conn.close()
     except Exception as e:
+        import traceback
         result["status"] = "error"
-        result["error"] = str(e)
+        result["error_type"] = type(e).__name__
+        result["error"] = repr(e)
+        result["error_detail"] = traceback.format_exc()
 
     return result
 

@@ -38,7 +38,19 @@ def get_db_connection():
         conn.execute("PRAGMA foreign_keys = ON;")
         return conn
 
-    conn = psycopg2.connect(database_url)
+    # Render Postgres requires SSL and benefits from a connect timeout.
+    # Parse the URL to inject sslmode if not already present.
+    from urllib.parse import urlparse, parse_qs, urlencode, urlunparse
+    parsed = urlparse(database_url)
+    # Build extra connection kwargs
+    connect_kwargs: dict = {
+        "connect_timeout": 10,
+    }
+    # Only add sslmode if not already in the query string
+    qs = parsed.query or ""
+    if "sslmode" not in qs:
+        connect_kwargs["sslmode"] = "require"
+    conn = psycopg2.connect(database_url, **connect_kwargs)
     conn.autocommit = False
     conn.cursor_factory = psycopg2.extras.RealDictCursor
     return conn
