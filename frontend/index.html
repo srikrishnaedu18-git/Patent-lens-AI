@@ -411,8 +411,19 @@
                         placeholder="e.g. smart irrigation, IoT soil sensor, crop water management"
                         autocomplete="off"
                       />
-                      <div style="margin-top: 6px; font-size: 0.78rem; color: var(--text-secondary);">
-                        Auto-sequential search will run across all platforms enabled in Settings (Google: Keyword, Indian: Complete Spec [CS], Espacenet: Title or Abstract [TA]).
+                      <div class="all-platforms-selector-bar" style="margin-top: 10px; display: flex; align-items: center; gap: 8px; flex-wrap: wrap;">
+                        <span style="font-size: 0.8rem; font-weight: 600; color: var(--text-secondary);">Scrape in Order:</span>
+                        <div class="all-platforms-pills" style="display: flex; gap: 8px;">
+                          <button type="button" class="all-platform-pill active" data-all-source="google">
+                            Google Patents
+                          </button>
+                          <button type="button" class="all-platform-pill active" data-all-source="india">
+                            Indian Patents
+                          </button>
+                          <button type="button" class="all-platform-pill active" data-all-source="espacenet">
+                            Espacenet
+                          </button>
+                        </div>
                       </div>
                     </div>
                   </div>
@@ -1169,49 +1180,6 @@
           </button>
         </div>
         <div class="settings-body">
-          <div class="settings-group">
-            <div class="settings-label">
-              <span>Patent Search Sources</span>
-              <span class="meta-text"
-                >Choose which patent databases the scraper should search</span
-              >
-            </div>
-            <div class="settings-option-cards">
-              <label class="option-card">
-                <input
-                  type="checkbox"
-                  name="search-source"
-                  value="google"
-                  checked
-                />
-                <div class="option-card-body">
-                  <div class="option-card-title">Google Patents</div>
-                  <div class="option-card-desc">
-                    Searches Google Patents with the existing scraper.
-                  </div>
-                </div>
-              </label>
-              <label class="option-card">
-                <input type="checkbox" name="search-source" value="india" />
-                <div class="option-card-body">
-                  <div class="option-card-title">Indian Patents</div>
-                  <div class="option-card-desc">
-                    Searches the IP India public patent search portal and saves
-                    application number, title, and abstract.
-                  </div>
-                </div>
-              </label>
-              <label class="option-card">
-                <input type="checkbox" name="search-source" value="espacenet" />
-                <div class="option-card-body">
-                  <div class="option-card-title">Espacenet</div>
-                  <div class="option-card-desc">
-                    Searches EPO Espacenet patent database with full Advanced Search query builder support.
-                  </div>
-                </div>
-              </label>
-            </div>
-          </div>
           <div class="settings-group">
             <div class="settings-label">
               <span>AI Relevance Audit Mode</span>

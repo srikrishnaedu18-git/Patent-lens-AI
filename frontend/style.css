@@ -2906,6 +2906,36 @@ body.light-theme .user-profile-section {
   color: var(--accent) !important;
 }
 
+/* All Platforms Pills */
+.all-platform-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 12px;
+  font-size: 0.78rem;
+  font-weight: 700;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border-color);
+  background-color: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: all var(--transition-fast);
+  opacity: 0.5;
+}
+
+.all-platform-pill.active {
+  opacity: 1;
+  background-color: var(--accent-bg);
+  border-color: var(--accent);
+  color: var(--accent);
+  box-shadow: 0 0 8px rgba(59, 130, 246, 0.15);
+}
+
+.all-platform-pill:hover {
+  opacity: 0.95;
+  border-color: var(--accent);
+}
+
 /* Collapsible Search Bar */
 .search-bar-container {
   margin: 12px 0 16px 0;

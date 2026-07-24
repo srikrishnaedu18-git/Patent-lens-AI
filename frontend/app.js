@@ -28,6 +28,7 @@ let state = {
   searchMode: "manual",
   auditMode: "sequential",
   searchSources: ["google"],
+  allSelectedSources: ["google", "india", "espacenet"],
   aiResponse: null,
   activeFilter: [], // e.g. ["Red", "Yellow"] (backward compatibility)
   filters: {
@@ -426,15 +427,8 @@ function initSearchSources() {
     state.searchSources = [state.searchSources[0]];
   }
 
-  syncSourceCheckboxes();
   syncSourceToggleButtons();
   updateSourceFieldsVisibility();
-}
-
-function syncSourceCheckboxes() {
-  document.querySelectorAll('input[name="search-source"]').forEach((cb) => {
-    cb.checked = state.searchSources.includes(cb.value);
-  });
 }
 
 function syncSourceToggleButtons() {
@@ -680,8 +674,15 @@ async function handleManualScrapeSubmit(e) {
       return;
     }
 
-    const checkedCbs = Array.from(document.querySelectorAll('input[name="search-source"]:checked')).map(cb => cb.value);
-    const enabledSources = checkedCbs.length > 0 ? checkedCbs : ["google", "india", "espacenet"];
+    const sourceOrder = ["google", "india", "espacenet"];
+    const enabledSources = sourceOrder.filter((src) =>
+      (state.allSelectedSources || ["google", "india", "espacenet"]).includes(src),
+    );
+
+    if (enabledSources.length === 0) {
+      alert("Please select at least one platform pill to search.");
+      return;
+    }
 
     setManualLoading(true);
     if (elBtnTerminateScrape) {
@@ -691,7 +692,7 @@ async function handleManualScrapeSubmit(e) {
     }
     elLiveFeed.classList.remove("hidden");
     clearLiveLog();
-    writeLogLine(`🚀 Starting Auto-Sequential Search for "${keywords}" across enabled platforms: [${enabledSources.join(", ").toUpperCase()}]...`, "info");
+    writeLogLine(`🚀 Starting Sequential Search for "${keywords}" across selected platforms: [${enabledSources.join(", ").toUpperCase()}]...`, "info");
     initStagePillsForFlow("manual_scrape");
 
     for (let sIdx = 0; sIdx < enabledSources.length; sIdx++) {
@@ -2288,7 +2289,6 @@ function showSettingsModal() {
     `input[name="audit-mode"][value="${state.auditMode}"]`,
   );
   if (radio) radio.checked = true;
-  syncSourceCheckboxes();
 }
 
 function hideSettingsModal() {
@@ -3071,6 +3071,27 @@ function setupEventListeners() {
     elBtnGlobalDeepScrape.addEventListener("click", () => triggerDeepScrape());
   }
 
+  // All Platforms pill selection listeners
+  document.querySelectorAll(".all-platform-pill").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const src = btn.dataset.allSource;
+      if (btn.classList.contains("active")) {
+        const activeBtns = document.querySelectorAll(".all-platform-pill.active");
+        if (activeBtns.length <= 1) {
+          alert("At least one platform must remain selected.");
+          return;
+        }
+        btn.classList.remove("active");
+        state.allSelectedSources = state.allSelectedSources.filter((s) => s !== src);
+      } else {
+        btn.classList.add("active");
+        if (!state.allSelectedSources.includes(src)) {
+          state.allSelectedSources.push(src);
+        }
+      }
+    });
+  });
+
   // Source Toggle Buttons listeners
   if (elBtnSourceAll) {
     elBtnSourceAll.addEventListener("click", () => {
@@ -3080,7 +3101,6 @@ function setupEventListeners() {
         JSON.stringify(state.searchSources),
       );
       syncSourceToggleButtons();
-      syncSourceCheckboxes();
       updateSourceFieldsVisibility();
     });
   }
@@ -3092,7 +3112,6 @@ function setupEventListeners() {
         JSON.stringify(state.searchSources),
       );
       syncSourceToggleButtons();
-      syncSourceCheckboxes();
       updateSourceFieldsVisibility();
     });
   }
@@ -3104,7 +3123,6 @@ function setupEventListeners() {
         JSON.stringify(state.searchSources),
       );
       syncSourceToggleButtons();
-      syncSourceCheckboxes();
       updateSourceFieldsVisibility();
     });
   }
@@ -3116,7 +3134,6 @@ function setupEventListeners() {
         JSON.stringify(state.searchSources),
       );
       syncSourceToggleButtons();
-      syncSourceCheckboxes();
       updateSourceFieldsVisibility();
     });
   }
