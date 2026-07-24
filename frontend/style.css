@@ -2862,14 +2862,39 @@ body.light-theme .user-profile-section {
 }
 
 /* ── In-Page Patent Search Bar & Filter Modal Upgrades ───────────────────────── */
-.btn-search-toggle {
+.btn-search-toggle,
+.btn-filter {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 8px 12px;
+  background-color: transparent;
+  border: 1px solid var(--border-color);
+  color: var(--text-primary);
+  border-radius: var(--radius-md);
+  cursor: pointer;
   transition: all var(--transition-fast);
 }
 
+.btn-search-toggle:hover,
+.btn-filter:hover {
+  background-color: var(--accent-bg);
+  border-color: var(--accent);
+  color: var(--text-primary);
+  transform: none;
+}
+
 .btn-search-toggle.active {
-  background-color: var(--accent);
-  color: #ffffff;
+  background-color: var(--accent) !important;
+  border-color: var(--accent) !important;
+  color: #ffffff !important;
   box-shadow: 0 0 12px var(--accent-glow);
+}
+
+.btn-filter.active {
+  background-color: var(--accent-bg) !important;
+  border-color: var(--accent) !important;
+  color: var(--accent) !important;
 }
 
 /* Collapsible Search Bar */
