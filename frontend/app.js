@@ -3072,6 +3072,18 @@ function setupEventListeners() {
   }
 
   // Source Toggle Buttons listeners
+  if (elBtnSourceAll) {
+    elBtnSourceAll.addEventListener("click", () => {
+      state.searchSources = ["all"];
+      localStorage.setItem(
+        "searchSources",
+        JSON.stringify(state.searchSources),
+      );
+      syncSourceToggleButtons();
+      syncSourceCheckboxes();
+      updateSourceFieldsVisibility();
+    });
+  }
   if (elBtnSourceGoogle) {
     elBtnSourceGoogle.addEventListener("click", () => {
       state.searchSources = ["google"];
