@@ -2583,7 +2583,15 @@ async function triggerDeepScrape(patentIdsOverride = null) {
       `Connection established. Deep scrape Task ID: ${task_id}`,
       "info",
     );
-    startSSEStream(task_id);
+    startSSEStream(task_id, async () => {
+      if (elBtnGlobalDeepScrape) {
+        elBtnGlobalDeepScrape.disabled = false;
+        elBtnGlobalDeepScrape.textContent = "Deep scrape";
+      }
+      if (state.activeProjectId) {
+        await loadProjectHistory(state.activeProjectId);
+      }
+    });
   } catch (err) {
     writeLogLine(`Deep scrape failed to start: ${err.message}`, "error");
     alert(`Could not start deep scrape: ${err.message}`);
