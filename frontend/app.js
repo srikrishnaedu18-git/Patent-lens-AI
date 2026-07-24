@@ -135,6 +135,7 @@ const elSelectAllHistoryCheckbox = document.getElementById(
 );
 const elBtnGlobalDelete = document.getElementById("btn-global-delete");
 const elBtnGlobalExportCsv = document.getElementById("btn-global-export-csv");
+const elBtnGlobalExportMd = document.getElementById("btn-global-export-md");
 const elBtnGlobalAiAudit = document.getElementById("btn-global-ai-audit");
 const elBtnGlobalDeepScrape = document.getElementById("btn-global-deep-scrape");
 
@@ -299,15 +300,49 @@ function initInventionDescription() {
 }
 
 // ── Theme Management ─────────────────────────────────────────────────────────
+// Uses a fresh key "pl-user-theme" (never set by any old code) so there are no
+// stale values. On first visit = follows browser/system preference. Once the
+// user explicitly clicks the toggle it is remembered across page loads.
+
+function getSystemTheme() {
+  return window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches
+    ? "dark"
+    : "light";
+}
+
 function initTheme() {
-  const savedTheme = localStorage.getItem("theme") || "dark";
-  setTheme(savedTheme);
+  // Clean up old stale keys from previous code versions
+  localStorage.removeItem("theme");
+  localStorage.removeItem("theme-user-set");
+
+  // Use the user's saved preference if they've explicitly toggled; else system
+  const saved = localStorage.getItem("pl-user-theme");
+  applyTheme(saved || getSystemTheme());
+
+  // Live-update if OS/browser preference changes and user hasn't pinned a choice
+  if (window.matchMedia) {
+    window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", (e) => {
+      if (!localStorage.getItem("pl-user-theme")) {
+        applyTheme(e.matches ? "dark" : "light");
+      }
+    });
+  }
+}
+
+function applyTheme(theme) {
+  state.theme = theme;
+  document.documentElement.setAttribute("data-theme", theme);
+  if (theme === "light") {
+    document.body.classList.add("light-theme");
+  } else {
+    document.body.classList.remove("light-theme");
+  }
 }
 
 function setTheme(theme) {
-  state.theme = theme;
-  document.documentElement.setAttribute("data-theme", theme);
-  localStorage.setItem("theme", theme);
+  // Only called by the explicit toggle — persists the user's deliberate choice
+  localStorage.setItem("pl-user-theme", theme);
+  applyTheme(theme);
 }
 
 function toggleTheme() {
@@ -339,35 +374,72 @@ function checkAuth() {
     });
 }
 
-function initAuth() {
-  const overlay = document.getElementById("auth-overlay");
-  const form = document.getElementById("auth-form");
-  const toggleBtn = document.getElementById("btn-auth-toggle");
+function switchAuthMode(mode) {
+  authMode = mode;
   const title = document.getElementById("auth-title");
   const subtitle = document.getElementById("auth-subtitle");
   const submitBtn = document.getElementById("btn-auth-submit");
-  const errorMsg = document.getElementById("auth-error-msg");
+  const toggleBtn = document.getElementById("btn-auth-toggle");
   const toggleText = document.getElementById("auth-toggle-text");
+  const errorMsg = document.getElementById("auth-error-msg");
+  const tabLogin = document.getElementById("tab-auth-login");
+  const tabRegister = document.getElementById("tab-auth-register");
 
-  toggleBtn.addEventListener("click", (e) => {
-    e.preventDefault();
-    errorMsg.classList.add("hidden");
-    if (authMode === "login") {
-      authMode = "register";
-      title.textContent = "Create Account";
-      subtitle.textContent = "Join PatentLens Studio to manage your projects";
-      submitBtn.textContent = "Create Account";
-      toggleText.textContent = "Already have an account?";
-      toggleBtn.textContent = "Sign In";
-    } else {
-      authMode = "login";
-      title.textContent = "Welcome Back";
-      subtitle.textContent = "Please enter your details to sign in";
-      submitBtn.textContent = "Sign In";
-      toggleText.textContent = "Don't have an account?";
-      toggleBtn.textContent = "Create an account";
-    }
-  });
+  errorMsg.classList.add("hidden");
+
+  if (mode === "register") {
+    if (title) title.textContent = "Create Account";
+    if (subtitle) subtitle.textContent = "Join PatentLens Studio to manage your projects";
+    if (submitBtn) submitBtn.textContent = "Create Account";
+    if (toggleText) toggleText.textContent = "Already have an account?";
+    if (toggleBtn) toggleBtn.textContent = "Sign In";
+    if (tabLogin) tabLogin.classList.remove("active");
+    if (tabRegister) tabRegister.classList.add("active");
+  } else {
+    if (title) title.textContent = "Welcome Back";
+    if (subtitle) subtitle.textContent = "Please enter your details to sign in";
+    if (submitBtn) submitBtn.textContent = "Sign In";
+    if (toggleText) toggleText.textContent = "Don't have an account?";
+    if (toggleBtn) toggleBtn.textContent = "Create an account";
+    if (tabRegister) tabRegister.classList.remove("active");
+    if (tabLogin) tabLogin.classList.add("active");
+  }
+}
+
+function initAuth() {
+  const form = document.getElementById("auth-form");
+  const toggleBtn = document.getElementById("btn-auth-toggle");
+  const tabLogin = document.getElementById("tab-auth-login");
+  const tabRegister = document.getElementById("tab-auth-register");
+  const btnTogglePassword = document.getElementById("btn-toggle-password");
+  const passwordInput = document.getElementById("auth-password");
+  const iconEyeShow = document.getElementById("icon-eye-show");
+  const iconEyeHide = document.getElementById("icon-eye-hide");
+
+  if (tabLogin) {
+    tabLogin.addEventListener("click", () => switchAuthMode("login"));
+  }
+  if (tabRegister) {
+    tabRegister.addEventListener("click", () => switchAuthMode("register"));
+  }
+
+  if (toggleBtn) {
+    toggleBtn.addEventListener("click", (e) => {
+      e.preventDefault();
+      switchAuthMode(authMode === "login" ? "register" : "login");
+    });
+  }
+
+  if (btnTogglePassword && passwordInput) {
+    btnTogglePassword.addEventListener("click", () => {
+      const isPassword = passwordInput.type === "password";
+      passwordInput.type = isPassword ? "text" : "password";
+      if (iconEyeShow && iconEyeHide) {
+        iconEyeShow.classList.toggle("hidden", isPassword);
+        iconEyeHide.classList.toggle("hidden", !isPassword);
+      }
+    });
+  }
 
   form.addEventListener("submit", async (e) => {
     e.preventDefault();
@@ -3188,9 +3260,16 @@ function setupEventListeners() {
     });
   }
 
-  elBtnGlobalExportCsv.addEventListener("click", () =>
-    handleGlobalExport("csv"),
-  );
+  if (elBtnGlobalExportCsv) {
+    elBtnGlobalExportCsv.addEventListener("click", () =>
+      handleGlobalExport("csv"),
+    );
+  }
+  if (elBtnGlobalExportMd) {
+    elBtnGlobalExportMd.addEventListener("click", () =>
+      handleGlobalExport("markdown"),
+    );
+  }
   if (elBtnGlobalAiAudit) {
     elBtnGlobalAiAudit.addEventListener("click", triggerSelectedAudit);
   }

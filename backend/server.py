@@ -93,7 +93,7 @@ def get_current_user_id(session_token: str = Cookie(None)):
 @app.post("/api/auth/register")
 def auth_register(user: UserAuth, response: Response):
     username = user.username.strip()
-    password = user.password.strip()
+    password = user.password
     if not username or not password:
         raise HTTPException(status_code=400, detail="Username and password cannot be empty")
     try:
@@ -117,7 +117,7 @@ def auth_register(user: UserAuth, response: Response):
 @app.post("/api/auth/login")
 def auth_login(user: UserAuth, response: Response):
     username = user.username.strip()
-    password = user.password.strip()
+    password = user.password
     user_data = verify_user(username, password)
     if not user_data:
         raise HTTPException(status_code=401, detail="Invalid username or password")
@@ -1473,6 +1473,71 @@ def export_project_csv(project_id: int, req: ExportRequest = None, user_id: int 
     return StreamingResponse(
         io.BytesIO(output.getvalue().encode("utf-8")),
         media_type="text/csv",
+        headers={"Content-Disposition": f"attachment; filename={filename}"},
+    )
+
+@app.post("/api/projects/{project_id}/export/markdown")
+def export_project_markdown(project_id: int, req: ExportRequest = None, user_id: int = Depends(get_current_user_id)):
+    if not verify_project_ownership(project_id, user_id):
+        raise HTTPException(status_code=403, detail="Access denied")
+    req = req or ExportRequest()
+    patents = get_patents_by_ids(req.patent_ids, user_id) if req.patent_ids else get_all_project_patents(project_id, user_id)
+    if not patents:
+        raise HTTPException(status_code=404, detail="No patents found to export")
+
+    patents = _enrich_relevancy(patents)
+    patents = _apply_relevancy_filter(patents, req.relevancy_filter)
+    if not patents:
+        raise HTTPException(status_code=404, detail="No patents match the selected relevancy filter")
+
+    md_lines = []
+    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    md_lines.append("# PatentLens Intelligence Dossier")
+    md_lines.append(f"*Generated on: {timestamp}*")
+    md_lines.append(f"*Total Patents Included: {len(patents)}*\n")
+    md_lines.append("---")
+
+    for serial, p in enumerate(patents, start=1):
+        patent_id = p.get("patent_id") or str(p.get("id")) or f"Item_{serial}"
+        title = (p.get("title") or "Untitled Patent").strip()
+        abstract = (p.get("abstract") or "No abstract available.").strip()
+        url = p.get("url", "")
+        source = p.get("source", "Unknown")
+        scraped_at = p.get("scraped_at", "")
+        confidence = f"{p['confidence_score']:.2f}" if p.get("confidence_score") is not None else "N/A"
+        relevancy_label = score_to_relevancy(p.get("confidence_score")).upper()
+        ai_reasoning = (p.get("ai_reasoning") or "").strip()
+        deep_scrape_text = (p.get("deep_scrape_text") or "").strip()
+
+        md_lines.append(f"\n## {serial}. [{patent_id}] {title}")
+        md_lines.append(f"- **Patent ID / App No**: `{patent_id}`")
+        md_lines.append(f"- **Source**: {source}")
+        if url:
+            md_lines.append(f"- **URL**: [{url}]({url})")
+        if scraped_at:
+            md_lines.append(f"- **Scraped Date**: {scraped_at}")
+        md_lines.append(f"- **AI Relevancy Score**: {confidence} ({relevancy_label})")
+
+        md_lines.append("\n### 📋 Abstract")
+        md_lines.append(f"> {abstract}")
+
+        if ai_reasoning:
+            md_lines.append("\n### 🤖 AI Audit Reasoning")
+            md_lines.append(ai_reasoning)
+
+        if deep_scrape_text:
+            md_lines.append("\n### 📜 Full Specification & Deep Scrape Text")
+            md_lines.append(deep_scrape_text)
+        else:
+            md_lines.append("\n*Note: Deep scrape text not fetched for this patent.*")
+
+        md_lines.append("\n---\n")
+
+    content = "\n".join(md_lines)
+    filename = f"patentlens_dossier_project{project_id}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.md"
+    return StreamingResponse(
+        io.BytesIO(content.encode("utf-8")),
+        media_type="text/markdown",
         headers={"Content-Disposition": f"attachment; filename={filename}"},
     )
 

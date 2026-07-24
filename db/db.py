@@ -193,6 +193,16 @@ def register_user(username: str, password: str) -> int:
     conn = get_db_connection()
     cursor = conn.cursor()
     try:
+        # Check for case-sensitive username collision
+        chk_query = (
+            "SELECT id FROM users WHERE username = %s;"
+            if get_database_backend() == "postgres"
+            else "SELECT id FROM users WHERE username = ? COLLATE BINARY;"
+        )
+        cursor.execute(chk_query, (username,))
+        if cursor.fetchone():
+            raise ValueError("Username already exists")
+
         pwd_hash = hash_password(password)
         user_id = insert_and_get_id(
             cursor,
@@ -211,13 +221,20 @@ def verify_user(username: str, password: str) -> dict:
     conn = get_db_connection()
     cursor = conn.cursor()
     pwd_hash = hash_password(password)
-    cursor.execute(
-        "SELECT id, username FROM users WHERE LOWER(username) = LOWER(%s) AND password_hash = %s;" if get_database_backend() == "postgres" else "SELECT id, username FROM users WHERE LOWER(username) = LOWER(?) AND password_hash = ?;",
-        (username, pwd_hash),
+    # Strictly case-sensitive username and password matching
+    query = (
+        "SELECT id, username FROM users WHERE username = %s AND password_hash = %s;"
+        if get_database_backend() == "postgres"
+        else "SELECT id, username FROM users WHERE username = ? COLLATE BINARY AND password_hash = ?;"
     )
+    cursor.execute(query, (username, pwd_hash))
     row = cursor.fetchone()
     conn.close()
-    return dict(row) if row else None
+    if row:
+        user_dict = dict(row)
+        if user_dict["username"] == username:
+            return user_dict
+    return None
 
 def create_session(user_id: int) -> str:
     session_id = secrets.token_hex(32)
