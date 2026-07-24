@@ -355,6 +355,22 @@
                     AI Auto-Generate
                   </button>
                 </div>
+                <button
+                  id="btn-open-invention-modal"
+                  type="button"
+                  class="btn-secondary"
+                  style="display: inline-flex; align-items: center; gap: 8px; font-weight: 500;"
+                  title="Describe your invention in detail for AI Audit comparisons"
+                >
+                  <svg class="icon-sm" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+                    <polyline points="14 2 14 8 20 8"></polyline>
+                    <line x1="16" y1="13" x2="8" y2="13"></line>
+                    <line x1="16" y1="17" x2="8" y2="17"></line>
+                  </svg>
+                  <span>Describe Invention</span>
+                  <span id="invention-status-badge" class="hidden" style="width: 8px; height: 8px; background-color: var(--accent); border-radius: 50%; display: inline-block;"></span>
+                </button>
               </div>
 
               <!-- Manual keyword panel -->
@@ -622,25 +638,6 @@
                     </div>
                   </div>
 
-                  <div class="form-group flex-grow">
-                    <label for="manual-description-input"
-                      >Invention Description
-                      <span
-                        class="meta-text"
-                        style="
-                          text-transform: none;
-                          letter-spacing: 0;
-                          font-weight: 400;
-                        "
-                        >(used for AI audit comparisons)</span
-                      ></label
-                    >
-                    <textarea
-                      id="manual-description-input"
-                      rows="4"
-                      placeholder="Describe your invention in detail so the AI audit can compare each patent against your specific mechanism. E.g. 'A solar-powered drip irrigation controller using soil moisture sensors and IoT connectivity to dynamically regulate water flow...'"
-                    ></textarea>
-                  </div>
                   <div class="form-row">
                     <div class="form-group limit-group">
                       <label for="limit-input-manual">Max Results</label>
@@ -1285,6 +1282,48 @@
         </div>
         <div id="saved-keywords-list" class="saved-keywords-body">
           <p class="meta-text">No saved searches for this project yet.</p>
+        </div>
+      </div>
+    </div>
+
+    <!-- Invention Description Modal -->
+    <div id="modal-invention" class="modal-overlay hidden">
+      <div class="modal modal-filter" style="max-width: 580px;">
+        <div class="modal-header">
+          <h3 style="display: flex; align-items: center; gap: 8px;">
+            <svg class="icon-sm" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+              <polyline points="14 2 14 8 20 8"></polyline>
+              <line x1="16" y1="13" x2="8" y2="13"></line>
+              <line x1="16" y1="17" x2="8" y2="17"></line>
+            </svg>
+            Describe Invention
+          </h3>
+          <button id="btn-close-invention-modal" class="btn-icon" aria-label="Close Modal">
+            <svg class="icon" viewBox="0 0 24 24" fill="none">
+              <path d="M18 6L6 18M6 6L18 18" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"></path>
+            </svg>
+          </button>
+        </div>
+        <div class="filter-body">
+          <p class="filter-description">
+            Provide details of your invention mechanism so the AI audit agent can compare each scraped patent against your concept.
+          </p>
+          <div class="form-group flex-grow">
+            <label for="manual-description-input" style="font-weight: 600; font-size: 0.85rem; margin-bottom: 8px; display: block;">
+              Invention Description Details
+            </label>
+            <textarea
+              id="manual-description-input"
+              rows="6"
+              style="width: 100%; box-sizing: border-box; resize: vertical;"
+              placeholder="Describe your invention in detail so the AI audit can compare each patent against your specific mechanism. E.g. 'A solar-powered drip irrigation controller using soil moisture sensors and IoT connectivity to dynamically regulate water flow...'"
+            ></textarea>
+          </div>
+          <div style="display: flex; justify-content: flex-end; gap: 10px; margin-top: 16px;">
+            <button id="btn-cancel-invention" type="button" class="btn-secondary">Cancel</button>
+            <button id="btn-save-invention" type="button" class="btn-primary">Save Description</button>
+          </div>
         </div>
       </div>
     </div>

@@ -229,6 +229,14 @@ const elBtnSourceGoogle = document.getElementById("btn-source-google");
 const elBtnSourceIndia = document.getElementById("btn-source-india");
 const elBtnSourceEspacenet = document.getElementById("btn-source-espacenet");
 const elKeywordsInputAll = document.getElementById("keywords-input-all");
+
+// Invention Description Modal Elements
+const elModalInvention = document.getElementById("modal-invention");
+const elBtnOpenInventionModal = document.getElementById("btn-open-invention-modal");
+const elBtnCloseInventionModal = document.getElementById("btn-close-invention-modal");
+const elBtnCancelInvention = document.getElementById("btn-cancel-invention");
+const elBtnSaveInvention = document.getElementById("btn-save-invention");
+const elInventionStatusBadge = document.getElementById("invention-status-badge");
 const elBtnManualIndiaAddRow = document.getElementById(
   "btn-manual-india-add-row",
 );
@@ -275,10 +283,20 @@ document.addEventListener("DOMContentLoaded", () => {
   initSearchSources();
   initIndiaOptions();
   initEspacenetOptions();
+  initInventionDescription();
   initAuth();
   checkAuth();
   setupEventListeners();
 });
+
+function initInventionDescription() {
+  const savedDesc = localStorage.getItem("inventionDescription");
+  if (savedDesc && elManualDescriptionInput) {
+    elManualDescriptionInput.value = savedDesc;
+    state.activeRequirement = savedDesc;
+  }
+  updateInventionBadge();
+}
 
 // ── Theme Management ─────────────────────────────────────────────────────────
 function initTheme() {
@@ -2281,6 +2299,45 @@ function getSelectedPatentIds() {
     .filter((id) => Number.isInteger(id) && id > 0);
 }
 
+// ── Invention Description Modal ────────────────────────────────────────────────
+function updateInventionBadge() {
+  const desc = elManualDescriptionInput ? elManualDescriptionInput.value.trim() : "";
+  if (desc) {
+    if (elInventionStatusBadge) elInventionStatusBadge.classList.remove("hidden");
+    if (elBtnOpenInventionModal) {
+      elBtnOpenInventionModal.title = `Invention description saved (${desc.length} chars)`;
+    }
+  } else {
+    if (elInventionStatusBadge) elInventionStatusBadge.classList.add("hidden");
+    if (elBtnOpenInventionModal) {
+      elBtnOpenInventionModal.title = "Describe your invention in detail for AI Audit comparisons";
+    }
+  }
+}
+
+function showInventionModal() {
+  if (!elModalInvention) return;
+  elModalInvention.classList.remove("hidden");
+  if (elManualDescriptionInput) {
+    elManualDescriptionInput.focus();
+  }
+}
+
+function hideInventionModal() {
+  if (elModalInvention) elModalInvention.classList.add("hidden");
+}
+
+function saveInventionDescription() {
+  const text = elManualDescriptionInput ? elManualDescriptionInput.value.trim() : "";
+  state.activeRequirement = text;
+  localStorage.setItem("inventionDescription", text);
+  updateInventionBadge();
+  hideInventionModal();
+  if (text) {
+    writeLogLine("💡 Invention description saved for AI Audit comparisons.", "success");
+  }
+}
+
 // ── Settings modal ───────────────────────────────────────────────────────────
 function showSettingsModal() {
   elModalSettings.classList.remove("hidden");
@@ -2888,6 +2945,28 @@ function setupEventListeners() {
         state.captchaService = e.target.value;
       });
     });
+
+  // Invention Description Modal
+  if (elBtnOpenInventionModal) {
+    elBtnOpenInventionModal.addEventListener("click", showInventionModal);
+  }
+  if (elBtnCloseInventionModal) {
+    elBtnCloseInventionModal.addEventListener("click", hideInventionModal);
+  }
+  if (elBtnCancelInvention) {
+    elBtnCancelInvention.addEventListener("click", hideInventionModal);
+  }
+  if (elBtnSaveInvention) {
+    elBtnSaveInvention.addEventListener("click", saveInventionDescription);
+  }
+  if (elModalInvention) {
+    elModalInvention.addEventListener("click", (e) => {
+      if (e.target === elModalInvention) hideInventionModal();
+    });
+  }
+  if (elManualDescriptionInput) {
+    elManualDescriptionInput.addEventListener("input", updateInventionBadge);
+  }
 
   // Saved Keywords Modal
   const btnSavedKeywords = document.getElementById("btn-saved-keywords");
