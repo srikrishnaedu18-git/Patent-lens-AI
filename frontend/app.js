@@ -2544,10 +2544,11 @@ function setupExportDropup() {
   const elMainBtn = document.getElementById("btn-global-export-main");
   const elToggleBtn = document.getElementById("btn-global-export-toggle");
   const elSplitContainer = document.getElementById("export-split-container");
+  const elDropupMenu = document.getElementById("export-dropup-menu");
 
   updateExportDefaultUI(currentExportFormatKey);
 
-  // Main button click: download in default format directly
+  // Main button click: download in default format directly (hover over main button does NOT open menu)
   if (elMainBtn) {
     elMainBtn.addEventListener("click", (e) => {
       e.stopPropagation();
@@ -2556,12 +2557,32 @@ function setupExportDropup() {
     });
   }
 
-  // Toggle button click
+  // Hover management: only show dropup when hovering over the accordion toggle button or the menu itself
+  let hoverTimer = null;
+
+  const showHoverMenu = () => {
+    if (hoverTimer) clearTimeout(hoverTimer);
+    elSplitContainer?.classList.add("hover-open");
+  };
+
+  const hideHoverMenu = () => {
+    hoverTimer = setTimeout(() => {
+      elSplitContainer?.classList.remove("hover-open");
+    }, 150);
+  };
+
   if (elToggleBtn) {
+    elToggleBtn.addEventListener("mouseenter", showHoverMenu);
+    elToggleBtn.addEventListener("mouseleave", hideHoverMenu);
     elToggleBtn.addEventListener("click", (e) => {
       e.stopPropagation();
       elSplitContainer?.classList.toggle("open");
     });
+  }
+
+  if (elDropupMenu) {
+    elDropupMenu.addEventListener("mouseenter", showHoverMenu);
+    elDropupMenu.addEventListener("mouseleave", hideHoverMenu);
   }
 
   // Clicking format body ("press on the body"): sets new default & downloads
@@ -2573,6 +2594,9 @@ function setupExportDropup() {
 
       updateExportDefaultUI(formatKey);
 
+      elSplitContainer?.classList.remove("hover-open");
+      elSplitContainer?.classList.remove("open");
+
       const apiFormat = EXPORT_FORMAT_CONFIG[formatKey]?.apiFormat || "markdown";
       handleGlobalExport(apiFormat);
     });
@@ -2583,6 +2607,9 @@ function setupExportDropup() {
     btnEl.addEventListener("click", (e) => {
       e.stopPropagation();
       const formatKey = btnEl.dataset.downloadFormat || "md";
+
+      elSplitContainer?.classList.remove("hover-open");
+      elSplitContainer?.classList.remove("open");
 
       const apiFormat = EXPORT_FORMAT_CONFIG[formatKey]?.apiFormat || "markdown";
       handleGlobalExport(apiFormat);

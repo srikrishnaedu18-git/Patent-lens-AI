@@ -812,12 +812,13 @@ select:focus {
   transition: transform var(--transition-fast);
 }
 
-.export-split-dropdown-container:hover .export-chevron,
+.export-split-dropdown-container:has(.btn-export-toggle:hover) .export-chevron,
+.export-split-dropdown-container.hover-open .export-chevron,
 .export-split-dropdown-container.open .export-chevron {
   transform: rotate(180deg);
 }
 
-/* Dropup Menu Positioning (pops UP on hover or click) */
+/* Dropup Menu Positioning (pops UP only when accordion toggle button or menu itself is hovered/clicked) */
 .export-dropup-menu {
   position: absolute;
   bottom: calc(100% + 6px);
@@ -840,7 +841,7 @@ select:focus {
   transition: opacity 0.2s cubic-bezier(0.16, 1, 0.3, 1), transform 0.2s cubic-bezier(0.16, 1, 0.3, 1), visibility 0.2s;
 }
 
-/* Invisible bridge so mouse hover doesn't break moving between button & dropup menu */
+/* Invisible bridge so mouse hover doesn't break moving between accordion toggle & dropup menu */
 .export-dropup-menu::after {
   content: "";
   position: absolute;
@@ -851,7 +852,9 @@ select:focus {
   background: transparent;
 }
 
-.export-split-dropdown-container:hover .export-dropup-menu,
+.export-split-dropdown-container:has(.btn-export-toggle:hover) .export-dropup-menu,
+.export-split-dropdown-container.hover-open .export-dropup-menu,
+.export-dropup-menu:hover,
 .export-split-dropdown-container.open .export-dropup-menu {
   opacity: 1;
   visibility: visible;
@@ -923,7 +926,7 @@ select:focus {
 .btn-direct-download {
   background: transparent;
   border: none;
-  color: var(--text-secondary);
+  color: var(--accent);
   padding: 6px 8px;
   border-radius: var(--radius-sm);
   cursor: pointer;
@@ -933,10 +936,21 @@ select:focus {
   transition: all var(--transition-fast);
 }
 
+.btn-direct-download svg {
+  stroke: var(--accent);
+  transition: stroke var(--transition-fast);
+}
+
 .btn-direct-download:hover {
-  background-color: var(--accent);
-  color: #ffffff;
-  transform: scale(1.1);
+  background-color: var(--accent) !important;
+  color: #ffffff !important;
+  transform: scale(1.08);
+  box-shadow: 0 2px 8px rgba(79, 110, 247, 0.35);
+}
+
+.btn-direct-download:hover svg {
+  stroke: #ffffff !important;
+  color: #ffffff !important;
 }
 
 

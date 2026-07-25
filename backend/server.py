@@ -1452,8 +1452,8 @@ async def _direct_deep_scrape_pipeline(
     project_id: int,
 ):
     """Directly deep scrape list of patent publication numbers and save with full text & metadata.
-    First executes normal search/scrape to retrieve canonical patent URLs & metadata,
-    then executes deep scrape for complete claims & description retrieval.
+    First executes normal search/scrape to retrieve canonical patent URLs & metadata smoothly across
+    all patent platforms (Google Patents, Espacenet, India Patents), then executes deep scrape for complete claims & description retrieval.
     """
     import re
     queue = _task_queues[task_id]
@@ -1487,7 +1487,11 @@ async def _direct_deep_scrape_pipeline(
 
         if clean_pid.startswith("http://") or clean_pid.startswith("https://"):
             url = clean_pid
-            m = re.search(r'/patent/([^/]+)', url) or re.search(r'pn=([^&]+)', url)
+            m = (
+                re.search(r'/patent/([^/]+)', url)
+                or re.search(r'pn=([^&]+)', url)
+                or re.search(r'espacenet\.com/patent/search\?q=pn%3D([^&]+)', url)
+            )
             clean_pid = m.group(1) if m else clean_pid
             patent_code = clean_pid
 
@@ -1498,18 +1502,30 @@ async def _direct_deep_scrape_pipeline(
             "message": f"🔍 [1/2] Normal scrape retrieving URL & metadata for [{idx}/{total}]: {clean_pid}",
         })
 
-        # Step 1: Perform normal scrape first to get canonical URL, title & abstract smoothly
+        # Step 1: Perform normal scrape first across relevant sources (Google Patents, Espacenet, India Patents)
         scraped_results = []
         if not url:
             try:
-                is_india = clean_pid.upper().startswith("IN") or bool(re.search(r'^\d{10,14}$', clean_pid))
-                source_target = "India Patents" if is_india else "Google Patents"
-                
-                scraped_results = await scrape_patents(
-                    query=clean_pid,
-                    sources=[source_target],
-                    max_results=1,
-                )
+                pid_u = clean_pid.upper().strip()
+                if pid_u.startswith("IN") or bool(re.search(r'^\d{10,14}$', pid_u)):
+                    primary_sources = ["India Patents", "Google Patents"]
+                elif any(pid_u.startswith(prefix) for prefix in ["EP", "WO", "DE", "FR", "GB", "JP", "CN", "KR", "AT", "CH", "CA", "AU"]):
+                    primary_sources = ["Espacenet", "Google Patents"]
+                else:
+                    primary_sources = ["Google Patents", "Espacenet"]
+
+                for src in primary_sources:
+                    try:
+                        scraped_results = await scrape_patents(
+                            query=clean_pid,
+                            sources=[src],
+                            max_results=1,
+                        )
+                        if scraped_results:
+                            break
+                    except Exception as src_err:
+                        logger.warning("[DirectDeepScrape] Normal scrape pre-fetch from %s failed for %s: %s", src, clean_pid, src_err)
+
             except Exception as e:
                 logger.warning("[DirectDeepScrape] Normal scrape pre-fetch failed for %s: %s", clean_pid, e)
 
@@ -1523,8 +1539,12 @@ async def _direct_deep_scrape_pipeline(
 
         # Fallback URL resolution if normal scrape did not provide a URL
         if not url:
-            if clean_pid.upper().startswith("IN") or bool(re.search(r'^\d{10,14}$', clean_pid)):
+            pid_u = clean_pid.upper().strip()
+            if pid_u.startswith("IN") or bool(re.search(r'^\d{10,14}$', pid_u)):
                 url = "https://iprsearch.ipindia.gov.in/publicsearch"
+            elif any(pid_u.startswith(prefix) for prefix in ["EP", "WO"]):
+                code_clean = clean_pid.replace(" ", "").replace("-", "").replace("/", "")
+                url = f"https://worldwide.espacenet.com/patent/search?q=pn%3D{code_clean}"
             else:
                 code_clean = clean_pid.replace(" ", "").replace("-", "").replace("/", "")
                 url = f"https://patents.google.com/patent/{code_clean}/en"
@@ -1552,8 +1572,14 @@ async def _direct_deep_scrape_pipeline(
             if not p_abstract and deep_text:
                 p_abstract = deep_text[:400] + "..." if len(deep_text) > 400 else deep_text
 
+            source_name = "Google Patents"
+            if "espacenet.com" in url.lower() or any(clean_pid.upper().startswith(p) for p in ["EP", "WO"]):
+                source_name = "Espacenet"
+            elif "ipindia" in url.lower() or "iprsearch" in url.lower() or clean_pid.upper().startswith("IN"):
+                source_name = "India Patents"
+
             p_dict = {
-                "source": "Google Patents" if "google" in url else ("India Patents" if "ipindia" in url or "iprsearch" in url else "Google Patents"),
+                "source": source_name,
                 "patent_id": patent_code,
                 "title": p_title,
                 "abstract": p_abstract,
@@ -1568,7 +1594,7 @@ async def _direct_deep_scrape_pipeline(
                 "current": idx,
                 "total": total,
                 "patent_id": inserted_id,
-                "message": f"✅ Deep scraped & saved {patent_code} — {len(deep_text):,} chars (URL: {url}).",
+                "message": f"✅ Deep scraped & saved {patent_code} — {len(deep_text):,} chars ({source_name}, URL: {url}).",
             })
         except Exception as exc:
             failed.append(clean_pid)
