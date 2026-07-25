@@ -564,6 +564,50 @@ def save_patents(search_id: int, patents: list[dict], user_id: int = None):
     finally:
         conn.close()
 
+
+def save_patent_with_deep_scrape(
+    search_id: int,
+    patent: dict,
+    deep_scrape_text: str,
+    user_id: int = None,
+) -> int:
+    if user_id is not None and not verify_search_ownership(search_id, user_id):
+        raise PermissionError("Access denied")
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    try:
+        patent_id_inserted = insert_and_get_id(
+            cursor,
+            """
+            INSERT INTO patents
+                (search_id, source, patent_id, title, abstract, url, confidence_score, ai_reasoning, deep_scrape_text, deep_scraped_at)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, CURRENT_TIMESTAMP)
+            """ if get_database_backend() == "postgres" else """
+            INSERT INTO patents
+                (search_id, source, patent_id, title, abstract, url, confidence_score, ai_reasoning, deep_scrape_text, deep_scraped_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP);
+            """,
+            (
+                search_id,
+                patent.get("source", "Google Patents"),
+                patent.get("patent_id", ""),
+                patent.get("title", ""),
+                patent.get("abstract", ""),
+                patent.get("url", ""),
+                patent.get("confidence_score"),
+                patent.get("ai_reasoning"),
+                deep_scrape_text,
+            ),
+        )
+        conn.commit()
+        logger.info("[DB] Saved direct deep scraped patent id=%d pid=%s for search_id=%d", patent_id_inserted, patent.get("patent_id"), search_id)
+        return patent_id_inserted
+    except Exception as e:
+        logger.error("[DB] save_patent_with_deep_scrape failed for search_id=%d: %s", search_id, e, exc_info=True)
+        raise
+    finally:
+        conn.close()
+
 def get_project_data(project_id: int, user_id: int) -> list[dict]:
     if not verify_project_ownership(project_id, user_id):
         raise PermissionError("Access denied")
@@ -710,3 +754,94 @@ def update_patent_deep_scrape(
         raise
     finally:
         conn.close()
+
+
+def deduplicate_project_patents(project_id: int, user_id: int, confirm: bool = False) -> dict:
+    if not verify_project_ownership(project_id, user_id):
+        raise PermissionError("Access denied")
+
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    ph = sql_placeholder()
+
+    # Query all patents for this project, newest search runs and highest DB IDs first
+    cursor.execute(
+        f"""
+        SELECT p.id AS patent_db_id, p.patent_id, p.title, p.url, p.source, p.search_id, s.query AS search_query, s.created_at AS search_created_at
+        FROM patents p
+        JOIN searches s ON p.search_id = s.id
+        WHERE s.project_id = {ph}
+        ORDER BY s.created_at DESC, p.id DESC;
+        """,
+        (project_id,),
+    )
+    rows = cursor.fetchall()
+
+    seen = {}
+    duplicates = []
+
+    for row in rows:
+        r_dict = dict(row)
+        pid_clean = (r_dict.get("patent_id") or "").strip().upper()
+        if not pid_clean:
+            pid_clean = (r_dict.get("url") or "").strip().lower()
+
+        if not pid_clean:
+            continue
+
+        if pid_clean not in seen:
+            seen[pid_clean] = r_dict
+        else:
+            duplicates.append(r_dict)
+
+    dup_ids = [d["patent_db_id"] for d in duplicates]
+
+    if not confirm:
+        conn.close()
+        dup_grouped = {}
+        for d in duplicates:
+            key = d.get("patent_id") or d.get("title") or f"Patent #{d['patent_db_id']}"
+            if key not in dup_grouped:
+                dup_grouped[key] = {
+                    "patent_id": d.get("patent_id") or "",
+                    "title": d.get("title") or "",
+                    "source": d.get("source") or "",
+                    "count": 0,
+                    "ids": []
+                }
+            dup_grouped[key]["count"] += 1
+            dup_grouped[key]["ids"].append(d["patent_db_id"])
+
+        return {
+            "status": "preview",
+            "duplicate_count": len(duplicates),
+            "unique_count": len(seen),
+            "duplicates": list(dup_grouped.values()),
+            "patent_ids_to_delete": dup_ids
+        }
+
+    if dup_ids:
+        placeholders = ",".join(ph for _ in dup_ids)
+        cursor.execute(
+            f"DELETE FROM patents WHERE id IN ({placeholders});",
+            dup_ids,
+        )
+
+        # Clean up empty search runs if any remain without patents
+        cursor.execute(
+            f"""
+            DELETE FROM searches 
+            WHERE project_id = {ph} 
+            AND id NOT IN (SELECT DISTINCT search_id FROM patents);
+            """,
+            (project_id,),
+        )
+        conn.commit()
+
+    conn.close()
+    logger.info("[DB] Deduplicated project_id=%d: deleted %d duplicate patent entries", project_id, len(dup_ids))
+    return {
+        "status": "success",
+        "deleted_count": len(dup_ids),
+        "message": f"Successfully deleted {len(dup_ids)} duplicate patent entries."
+    }

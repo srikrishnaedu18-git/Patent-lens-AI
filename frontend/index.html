@@ -715,7 +715,39 @@
                       </svg>
                       <span id="btn-manual-text">Scrape Patents</span>
                     </button>
+
+                    <button
+                      type="button"
+                      id="btn-direct-deep-scrape"
+                      class="btn-primary btn-submit"
+                      title="Directly deep scrape publication numbers separated by comma (e.g. US11952460B2, JP7502368B2)"
+                    >
+                      <svg
+                        class="icon animate-spin hidden"
+                        id="spinner-direct-deep"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                      >
+                        <circle
+                          cx="12"
+                          cy="12"
+                          r="10"
+                          stroke="currentColor"
+                          stroke-width="3"
+                          stroke-opacity="0.25"
+                        />
+                        <path
+                          d="M4 12C4 7.58172 7.58172 4 12 4"
+                          stroke="currentColor"
+                          stroke-width="3"
+                          stroke-linecap="round"
+                        />
+                      </svg>
+                      <span id="btn-direct-deep-text">⚡ Direct Deep Scrape</span>
+                    </button>
                   </div>
+
+
                 </form>
               </div>
 
@@ -1032,6 +1064,28 @@
                         <polygon
                           points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"
                         />
+                      </svg>
+                    </button>
+                    <!-- Deduplicate button -->
+                    <button
+                      type="button"
+                      id="btn-deduplicate-history"
+                      class="btn-secondary btn-icon btn-deduplicate"
+                      aria-label="Deduplicate history"
+                      title="Deduplicate History (Keep Latest Copy)"
+                    >
+                      <svg
+                        class="icon-sm"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        stroke-width="2"
+                        stroke-linecap="round"
+                        stroke-linejoin="round"
+                      >
+                        <path d="M8 6h12a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2z" />
+                        <path d="M4 18V6a2 2 0 0 1 2-2h10" />
+                        <line x1="12" y1="12" x2="16" y2="12" />
                       </svg>
                     </button>
                     <button
@@ -1820,6 +1874,6 @@
       </div>
     </div>
 
-    <script src="app.js?v=4"></script>
+    <script src="app.js?v=7"></script>
   </body>
 </html>

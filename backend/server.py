@@ -36,14 +36,14 @@ from pydantic import BaseModel, Field
 
 from db import (
     init_db, get_projects, create_project, delete_project,
-    create_search, save_patents, get_project_data, get_search_results,
+    create_search, save_patents, save_patent_with_deep_scrape, get_project_data, get_search_results,
     get_patents_by_ids, get_all_project_patents, update_patent_audit,
-    update_patent_deep_scrape,
+    update_patent_deep_scrape, deduplicate_project_patents,
     get_db_connection,
     register_user, verify_user, create_session, get_user_id_by_session, delete_session,
     verify_project_ownership, verify_search_ownership, verify_patent_ownership
 )
-from scraper import fetch_patent_deep_scrape, get_india_options_from_env, normalize_india_options, normalize_sources, scrape_patents
+from scraper import fetch_patent_deep_scrape, _fetch_google_patent_details_jsonld, get_india_options_from_env, normalize_india_options, normalize_sources, scrape_patents
 
 # ── Logging ───────────────────────────────────────────────────────────────────
 logging.basicConfig(
@@ -308,6 +308,10 @@ class SelectedAuditRequest(BaseModel):
 class DeepScrapeRequest(BaseModel):
     project_id: int
     patent_ids: list[int]
+
+class DirectDeepScrapeRequest(BaseModel):
+    project_id: int
+    keywords: str
 
 class ExportRequest(BaseModel):
     patent_ids: list[int] = None
@@ -769,13 +773,20 @@ async def _manual_pipeline(
                         else:
                             curr_india_options = india_options[-1] if india_options else None
 
+                    curr_espacenet_options = espacenet_options
+                    if isinstance(espacenet_options, list):
+                        if idx - 1 < len(espacenet_options):
+                            curr_espacenet_options = espacenet_options[idx - 1]
+                        else:
+                            curr_espacenet_options = espacenet_options[-1] if espacenet_options else None
+
                     patents = await scrape_patents(
                         kw,
                         max_results,
                         progress_callback=_progress_sync,
                         sources=sources,
                         india_options=curr_india_options,
-                        espacenet_options=espacenet_options,
+                        espacenet_options=curr_espacenet_options,
                         captcha_callback=lambda image, tid=task_id, cm=captcha_mode, cs=captcha_service: _request_captcha(tid, image, cm, cs),
                         is_cancelled_callback=lambda: _task_cancelled.get(task_id, False),
                     )
@@ -1123,6 +1134,7 @@ async def trigger_manual_scrape(req: ManualScrapeRequest, background_tasks: Back
                 has_espacenet_commas = True
                 break
 
+    keywords_list = []
     if is_india_active and has_india_commas:
         # Split by India query rows
         split_rows = []
@@ -1132,7 +1144,6 @@ async def trigger_manual_scrape(req: ManualScrapeRequest, background_tasks: Back
             split_rows.append(terms)
         
         max_terms = max(len(terms) for terms in split_rows) if split_rows else 0
-        keywords_list = []
         india_options_list = []
         for i in range(max_terms):
             new_rows = []
@@ -1166,7 +1177,7 @@ async def trigger_manual_scrape(req: ManualScrapeRequest, background_tasks: Back
         
         india_options = india_options_list
 
-    elif is_espacenet_active and has_espacenet_commas:
+    if is_espacenet_active and has_espacenet_commas:
         # Split by Espacenet query rows
         split_rows = []
         for row in espacenet_options["rows"]:
@@ -1175,7 +1186,7 @@ async def trigger_manual_scrape(req: ManualScrapeRequest, background_tasks: Back
             split_rows.append(terms)
         
         max_terms = max(len(terms) for terms in split_rows) if split_rows else 0
-        keywords_list = []
+        espacenet_keywords_list = []
         espacenet_options_list = []
         for i in range(max_terms):
             new_rows = []
@@ -1193,23 +1204,48 @@ async def trigger_manual_scrape(req: ManualScrapeRequest, background_tasks: Back
             for idx, row in enumerate(new_rows):
                 if not row["text"]:
                     continue
-                text_val = row["text"]
-                if " " in text_val or " AND " in text_val.upper() or " OR " in text_val.upper():
-                    text_val = f"({text_val})"
-                part = f"{row['field']}: {text_val}"
+                text_val = row["text"].replace('"', '').strip()
+                field_lower = (row.get("field") or "txt").lower()
+                op = row.get("operator", "all")
+                if field_lower == "ta":
+                    if op == "all" and " " in text_val:
+                        words = [w for w in text_val.split() if w]
+                        ti_p = " and ".join(f'ti="{w}"' for w in words)
+                        ab_p = " and ".join(f'ab="{w}"' for w in words)
+                        part = f"(({ti_p}) or ({ab_p}))"
+                    elif op == "any" and " " in text_val:
+                        words = [w for w in text_val.split() if w]
+                        ti_p = " or ".join(f'ti="{w}"' for w in words)
+                        ab_p = " or ".join(f'ab="{w}"' for w in words)
+                        part = f"(({ti_p}) or ({ab_p}))"
+                    else:
+                        part = f'(ti="{text_val}" or ab="{text_val}")'
+                else:
+                    if op == "all" and " " in text_val:
+                        words = [w for w in text_val.split() if w]
+                        f_p = " and ".join(f'{field_lower}="{w}"' for w in words)
+                        part = f"({f_p})"
+                    elif op == "any" and " " in text_val:
+                        words = [w for w in text_val.split() if w]
+                        f_p = " or ".join(f'{field_lower}="{w}"' for w in words)
+                        part = f"({f_p})"
+                    else:
+                        part = f'{field_lower}="{text_val}"'
                 if idx > 0:
                     parts.append(f"{new_rows[idx-1]['logic']} {part}")
                 else:
                     parts.append(part)
             combined_kw = " ".join(parts)
             
-            keywords_list.append(combined_kw)
+            espacenet_keywords_list.append(combined_kw)
             run_opt = espacenet_options.copy()
             run_opt["rows"] = new_rows
             espacenet_options_list.append(run_opt)
         
         espacenet_options = espacenet_options_list
-    else:
+        if not keywords_list:
+            keywords_list = espacenet_keywords_list
+    elif not keywords_list:
         # Standard splitting by comma in the raw_keywords input
         keywords_list = [k.strip() for k in raw_keywords.split(",") if k.strip()]
 
@@ -1409,6 +1445,126 @@ async def trigger_deep_scrape(req: DeepScrapeRequest, background_tasks: Backgrou
     return {"status": "processing", "task_id": task_id}
 
 
+async def _direct_deep_scrape_pipeline(
+    publication_numbers: list[str],
+    task_id: str,
+    user_id: int,
+    project_id: int,
+):
+    """Directly deep scrape list of patent publication numbers and save with full text & metadata."""
+    import re
+    queue = _task_queues[task_id]
+    total = len(publication_numbers)
+
+    await _push(queue, {
+        "stage": "scraping",
+        "message": f"Starting direct deep scrape for {total} publication number{'' if total == 1 else 's'}...",
+        "total": total,
+        "current": 0,
+    })
+
+    search_query = f"Direct Deep Scrape: {', '.join(publication_numbers[:5])}{'...' if len(publication_numbers) > 5 else ''}"
+    search_id = create_search(project_id, search_query, search_mode="direct_deep_scrape", user_id=user_id)
+
+    saved = 0
+    failed = []
+    for idx, pid in enumerate(publication_numbers, 1):
+        if _task_cancelled.get(task_id):
+            await _push(queue, {
+                "stage": "scraping",
+                "message": f"⛔ Direct deep scrape cancelled after {idx - 1}/{total} patents.",
+            })
+            break
+
+        clean_pid = pid.strip()
+        if clean_pid.startswith("http://") or clean_pid.startswith("https://"):
+            url = clean_pid
+            m = re.search(r'/patent/([^/]+)', url) or re.search(r'pn=([^&]+)', url)
+            clean_pid = m.group(1) if m else clean_pid
+        elif clean_pid.upper().startswith("IN") or bool(re.search(r'^\d{10,14}$', clean_pid)):
+            url = f"https://iprsearch.ipindia.gov.in/publicsearch"
+        else:
+            code = clean_pid.replace(" ", "").replace("-", "").replace("/", "")
+            url = f"https://patents.google.com/patent/{code}/en"
+
+        await _push(queue, {
+            "stage": "scraping",
+            "current": idx,
+            "total": total,
+            "message": f"Direct deep scraping [{idx}/{total}]: {clean_pid}",
+        })
+
+        try:
+            deep_text = await asyncio.to_thread(fetch_patent_deep_scrape, url, clean_pid)
+            title, abstract = await asyncio.to_thread(_fetch_google_patent_details_jsonld, clean_pid)
+            
+            p_title = title or f"Patent {clean_pid}"
+            p_abstract = abstract or (deep_text[:400] + "..." if len(deep_text) > 400 else deep_text or "Direct deep-scraped patent.")
+
+            p_dict = {
+                "source": "Google Patents",
+                "patent_id": clean_pid,
+                "title": p_title,
+                "abstract": p_abstract,
+                "url": url,
+                "confidence_score": None,
+                "ai_reasoning": None,
+            }
+            inserted_id = save_patent_with_deep_scrape(search_id, p_dict, deep_text, user_id=user_id)
+            saved += 1
+            await _push(queue, {
+                "stage": "saving",
+                "current": idx,
+                "total": total,
+                "patent_id": inserted_id,
+                "message": f"✅ Deep scraped & saved {clean_pid} — {len(deep_text):,} characters.",
+            })
+        except Exception as exc:
+            failed.append(clean_pid)
+            logger.error("[DirectDeepScrape] Failed for %s: %s", clean_pid, exc, exc_info=True)
+            await _push(queue, {
+                "stage": "scraping",
+                "current": idx,
+                "total": total,
+                "message": f"⚠️ Direct deep scrape failed for {clean_pid}: {str(exc)[:100]}",
+            })
+
+    await _push(queue, {
+        "stage": "complete",
+        "message": f"Direct deep scrape complete — saved {saved}/{total} patents.",
+        "failed_patents": failed,
+        "data": get_project_data(project_id, user_id),
+    })
+
+
+@app.post("/api/direct-deep-scrape")
+async def trigger_direct_deep_scrape(req: DirectDeepScrapeRequest, background_tasks: BackgroundTasks, user_id: int = Depends(get_current_user_id)):
+    """Directly deep scrape publication numbers provided in the keywords input."""
+    import re
+    if not verify_project_ownership(req.project_id, user_id):
+        raise HTTPException(status_code=403, detail="Access denied")
+    
+    pids = [p.strip() for p in re.split(r'[,;\n]+', req.keywords or "") if p.strip()]
+    if not pids:
+        raise HTTPException(status_code=400, detail="Please enter at least one valid publication number or patent ID")
+
+    task_id = str(uuid.uuid4())
+    queue: asyncio.Queue = asyncio.Queue()
+    _task_queues[task_id] = queue
+    _task_cancelled[task_id] = False
+
+    logger.info("[API] Direct deep scrape triggered — pids=%d, task_id=%s", len(pids), task_id)
+
+    background_tasks.add_task(
+        _direct_deep_scrape_pipeline,
+        publication_numbers=pids,
+        task_id=task_id,
+        user_id=user_id,
+        project_id=req.project_id,
+    )
+    return {"status": "processing", "task_id": task_id}
+
+
 @app.get("/api/ai/stream/{task_id}")
 async def stream_task(task_id: str, user_id: int = Depends(get_current_user_id)):
     """SSE endpoint — client connects here to receive live pipeline progress."""
@@ -1473,6 +1629,21 @@ def _enrich_relevancy(patents: list[dict]) -> list[dict]:
 class DeleteHistoryRequest(BaseModel):
     search_ids: list[int] = []
     patent_ids: list[int] = []
+
+class DeduplicateHistoryRequest(BaseModel):
+    project_id: int
+    confirm: bool = False
+
+@app.post("/api/history/deduplicate")
+def deduplicate_history(req: DeduplicateHistoryRequest, user_id: int = Depends(get_current_user_id)):
+    try:
+        res = deduplicate_project_patents(req.project_id, user_id, confirm=req.confirm)
+        return res
+    except PermissionError:
+        raise HTTPException(status_code=403, detail="Access denied")
+    except Exception as e:
+        logger.error("[API] Failed to deduplicate history: %s", e, exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/api/history/delete")
 def delete_history(req: DeleteHistoryRequest, user_id: int = Depends(get_current_user_id)):

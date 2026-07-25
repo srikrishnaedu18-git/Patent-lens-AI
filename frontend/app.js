@@ -88,6 +88,9 @@ const elLimitInputManual = document.getElementById("limit-input-manual");
 const elBtnManualScrape = document.getElementById("btn-manual-scrape");
 const elBtnManualText = document.getElementById("btn-manual-text");
 const elSpinnerManual = document.getElementById("spinner-manual");
+const elBtnDirectDeepScrape = document.getElementById("btn-direct-deep-scrape");
+const elBtnDirectDeepText = document.getElementById("btn-direct-deep-text");
+const elSpinnerDirectDeep = document.getElementById("spinner-direct-deep");
 
 // AI Search Steps
 const elAiStepInput = document.getElementById("ai-step-input");
@@ -134,6 +137,9 @@ const elSelectAllHistoryCheckbox = document.getElementById(
   "select-all-history-checkbox",
 );
 const elBtnGlobalDelete = document.getElementById("btn-global-delete");
+const elBtnDeduplicateHistory = document.getElementById(
+  "btn-deduplicate-history",
+);
 const elBtnGlobalExportCsv = document.getElementById("btn-global-export-csv");
 const elBtnGlobalExportMd = document.getElementById("btn-global-export-md");
 const elBtnGlobalAiAudit = document.getElementById("btn-global-ai-audit");
@@ -892,11 +898,34 @@ async function handleManualScrapeSubmit(e) {
       if (!r.text) continue;
       let textVal = r.text.replace(/"/g, "").trim();
       const f = (r.field || "txt").toLowerCase();
+      const op = r.operator || "all";
       let part = "";
       if (f === "ta") {
-        part = `(ti="${textVal}" or ab="${textVal}")`;
+        if (op === "all" && textVal.includes(" ")) {
+          const words = textVal.split(/\s+/).filter(Boolean);
+          const tiP = words.map((w) => `ti="${w}"`).join(" and ");
+          const abP = words.map((w) => `ab="${w}"`).join(" and ");
+          part = `((${tiP}) or (${abP}))`;
+        } else if (op === "any" && textVal.includes(" ")) {
+          const words = textVal.split(/\s+/).filter(Boolean);
+          const tiP = words.map((w) => `ti="${w}"`).join(" or ");
+          const abP = words.map((w) => `ab="${w}"`).join(" or ");
+          part = `((${tiP}) or (${abP}))`;
+        } else {
+          part = `(ti="${textVal}" or ab="${textVal}")`;
+        }
       } else {
-        part = `${f}="${textVal}"`;
+        if (op === "all" && textVal.includes(" ")) {
+          const words = textVal.split(/\s+/).filter(Boolean);
+          const fP = words.map((w) => `${f}="${w}"`).join(" and ");
+          part = `(${fP})`;
+        } else if (op === "any" && textVal.includes(" ")) {
+          const words = textVal.split(/\s+/).filter(Boolean);
+          const fP = words.map((w) => `${f}="${w}"`).join(" or ");
+          part = `(${fP})`;
+        } else {
+          part = `${f}="${textVal}"`;
+        }
       }
       if (queryParts.length > 0) {
         queryParts.push(`${r.logic} ${part}`);
@@ -1002,6 +1031,68 @@ async function handleManualScrapeSubmit(e) {
           displayList.push(parts.join(" "));
         }
       }
+    } else if (
+      espacenetRows.length > 0 &&
+      espacenetRows.some((r) => r.text && r.text.includes(","))
+    ) {
+      const splitRows = espacenetRows.map((r) =>
+        (r.text || "")
+          .split(",")
+          .map((t) => t.trim())
+          .filter(Boolean),
+      );
+      const maxTerms = Math.max(...splitRows.map((r) => r.length));
+      displayList = [];
+      for (let i = 0; i < maxTerms; i++) {
+        let parts = [];
+        for (let idx = 0; idx < espacenetRows.length; idx++) {
+          const terms = splitRows[idx];
+          const term =
+            i < terms.length ? terms[i] : terms[terms.length - 1] || "";
+          if (!term) continue;
+          let textVal = term.replace(/"/g, "").trim();
+          const f = (espacenetRows[idx].field || "txt").toLowerCase();
+          const op = espacenetRows[idx].operator || "all";
+          let part = "";
+          if (f === "ta") {
+            if (op === "all" && textVal.includes(" ")) {
+              const words = textVal.split(/\s+/).filter(Boolean);
+              const tiP = words.map((w) => `ti="${w}"`).join(" and ");
+              const abP = words.map((w) => `ab="${w}"`).join(" and ");
+              part = `((${tiP}) or (${abP}))`;
+            } else if (op === "any" && textVal.includes(" ")) {
+              const words = textVal.split(/\s+/).filter(Boolean);
+              const tiP = words.map((w) => `ti="${w}"`).join(" or ");
+              const abP = words.map((w) => `ab="${w}"`).join(" or ");
+              part = `((${tiP}) or (${abP}))`;
+            } else {
+              part = `(ti="${textVal}" or ab="${textVal}")`;
+            }
+          } else {
+            if (op === "all" && textVal.includes(" ")) {
+              const words = textVal.split(/\s+/).filter(Boolean);
+              const fP = words.map((w) => `${f}="${w}"`).join(" and ");
+              part = `(${fP})`;
+            } else if (op === "any" && textVal.includes(" ")) {
+              const words = textVal.split(/\s+/).filter(Boolean);
+              const fP = words.map((w) => `${f}="${w}"`).join(" or ");
+              part = `(${fP})`;
+            } else {
+              part = `${f}="${textVal}"`;
+            }
+          }
+          if (idx > 0) {
+            parts.push(`${espacenetRows[idx - 1].logic} ${part}`);
+          } else {
+            parts.push(part);
+          }
+        }
+        if (parts.length > 0) {
+          displayList.push(parts.join(" "));
+        }
+      }
+    } else if (keywords.includes(",")) {
+      displayList = keywords.split(",").map((k) => k.trim()).filter(Boolean);
     }
     updateStagePill("planning", "done");
     updateStagePill("scraping", "active");
@@ -1093,6 +1184,89 @@ function setManualLoading(isLoading) {
         .querySelectorAll("input, select, button")
         .forEach((el) => (el.disabled = false));
     }
+  }
+}
+
+async function handleDirectDeepScrape() {
+  if (!state.activeProjectId) {
+    alert("Please select or create a project first.");
+    return;
+  }
+
+  const rawKeywords = elKeywordsInput ? elKeywordsInput.value.trim() : "";
+  if (!rawKeywords) {
+    alert("Please enter publication numbers (e.g. US11952460B2, JP7502368B2) in the keywords input box.");
+    return;
+  }
+
+  setDirectDeepLoading(true);
+  if (elBtnTerminateScrape) {
+    elBtnTerminateScrape.classList.remove("hidden");
+    elBtnTerminateScrape.disabled = false;
+    elBtnTerminateScrape.innerText = "Stop";
+  }
+  elLiveFeed.classList.remove("hidden");
+  clearLiveLog();
+  writeLogLine(`⚡ Starting Direct Deep Scrape for publication numbers: "${rawKeywords}"...`, "info");
+  initStagePillsForFlow("direct_deep_scrape");
+  updateStagePill("scraping", "active");
+
+  try {
+    const response = await fetch("/api/direct-deep-scrape", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        project_id: state.activeProjectId,
+        keywords: rawKeywords,
+      }),
+    });
+
+    if (!response.ok) {
+      const errData = await response.json().catch(() => ({ detail: "Direct deep scrape operation failed" }));
+      throw new Error(errData.detail || "Direct deep scrape operation failed");
+    }
+
+    const result = await response.json();
+    if (result.status === "processing") {
+      state.activeTaskId = result.task_id;
+      writeLogLine(`📡 Connection established. Direct Deep Scrape Task ID: ${result.task_id}`, "info");
+      startSSEStream(result.task_id, () => {
+        setDirectDeepLoading(false);
+        if (elKeywordsInput) elKeywordsInput.value = "";
+        loadProjectHistory(state.activeProjectId);
+      });
+    } else {
+      writeLogLine("💾 Direct deep scrape results saved successfully.", "success");
+      updateStagePill("scraping", "done");
+      updateStagePill("complete", "done");
+      if (elKeywordsInput) elKeywordsInput.value = "";
+      loadProjectHistory(state.activeProjectId);
+      setDirectDeepLoading(false);
+      if (elBtnTerminateScrape) elBtnTerminateScrape.classList.add("hidden");
+    }
+  } catch (err) {
+    writeLogLine(`❌ Error: ${err.message}`, "error");
+    updateStagePill("scraping", "error");
+    alert(`Error running direct deep scrape: ${err.message}`);
+    setDirectDeepLoading(false);
+    if (elBtnTerminateScrape) elBtnTerminateScrape.classList.add("hidden");
+  }
+}
+
+function setDirectDeepLoading(isLoading) {
+  state.isScraping = isLoading;
+  if (isLoading) {
+    if (elBtnDirectDeepScrape) elBtnDirectDeepScrape.disabled = true;
+    if (elBtnManualScrape) elBtnManualScrape.disabled = true;
+    if (elKeywordsInput) elKeywordsInput.disabled = true;
+    if (elSpinnerDirectDeep) elSpinnerDirectDeep.classList.remove("hidden");
+    if (elBtnDirectDeepText) elBtnDirectDeepText.innerText = "Deep Scraping...";
+  } else {
+    if (elBtnDirectDeepScrape) elBtnDirectDeepScrape.disabled = false;
+    if (elBtnManualScrape) elBtnManualScrape.disabled = false;
+    if (elKeywordsInput) elKeywordsInput.disabled = false;
+    if (elSpinnerDirectDeep) elSpinnerDirectDeep.classList.add("hidden");
+    if (elBtnDirectDeepText) elBtnDirectDeepText.innerText = "⚡ Direct Deep Scrape";
   }
 }
 
@@ -1265,6 +1439,7 @@ function initStagePillsForFlow(flowName) {
     manual_scrape: ["planning", "scraping", "saving", "complete"],
     ai_search: ["planning", "scraping", "saving", "complete"],
     ai_audit: ["auditing", "complete"],
+    direct_deep_scrape: ["scraping", "saving", "complete"],
   };
 
   const activeStages = flows[flowName] || [];
@@ -3013,6 +3188,10 @@ function setupEventListeners() {
 
   // Forms
   elScrapeFormManual.addEventListener("submit", handleManualScrapeSubmit);
+  if (elBtnDirectDeepScrape) {
+    elBtnDirectDeepScrape.addEventListener("click", handleDirectDeepScrape);
+  }
+
   elBtnGenerateQueries.addEventListener("click", handleGenerateQueries);
   elBtnConfirmSearch.addEventListener("click", handleConfirmSearch);
 
@@ -3196,8 +3375,85 @@ function setupEventListeners() {
     });
   }
 
-  // Global Delete Click
+  // Global Delete & Deduplicate Click
   let deletePayload = { searchIds: [], patentIds: [] };
+  let isDeduplicateMode = false;
+
+  if (elBtnDeduplicateHistory) {
+    elBtnDeduplicateHistory.addEventListener("click", async () => {
+      if (!state.activeProjectId) {
+        alert("Please select a project first.");
+        return;
+      }
+
+      try {
+        const res = await fetch("/api/history/deduplicate", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            project_id: state.activeProjectId,
+            confirm: false,
+          }),
+        });
+
+        if (!res.ok) {
+          const err = await res.json();
+          throw new Error(formatErrorDetail(err.detail, "Deduplication preview failed"));
+        }
+
+        const data = await res.json();
+
+        if (data.duplicate_count === 0) {
+          alert("No duplicate patents found in this project. All scraped history entries are unique!");
+          return;
+        }
+
+        isDeduplicateMode = true;
+
+        // Customize modal header and title for deduplication
+        const modalHeaderHeading = elModalDeleteConfirm?.querySelector(".modal-header h3");
+        if (modalHeaderHeading) {
+          modalHeaderHeading.innerHTML = `
+            <svg class="icon-sm" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M8 6h12a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2z" />
+              <path d="M4 18V6a2 2 0 0 1 2-2h10" />
+              <line x1="12" y1="12" x2="16" y2="12" />
+            </svg>
+            Confirm Deduplication`;
+        }
+
+        const alertBodyText = elModalDeleteConfirm?.querySelector(".alert-body p");
+        if (alertBodyText) {
+          alertBodyText.innerHTML = `Found <strong>${data.duplicate_count}</strong> duplicate patent entry(entries) in this project. Keeping 1 latest copy of each and removing older duplicates:`;
+        }
+
+        if (elBtnDeleteConfirmAction) {
+          elBtnDeleteConfirmAction.textContent = `Deduplicate & Delete (${data.duplicate_count})`;
+        }
+
+        // Render duplicate items list
+        if (elDeleteSelectedList) {
+          elDeleteSelectedList.innerHTML = data.duplicates
+            .map((item) => {
+              const label = item.patent_id ? `${item.patent_id} - ${item.title}` : item.title;
+              return `<div class="delete-item-row">
+                <svg class="icon-xs" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="color: var(--accent); flex-shrink: 0;"><path d="M8 6h12a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2z"></path><path d="M4 18V6a2 2 0 0 1 2-2h10"></path></svg>
+                <span class="delete-item-badge delete-item-badge--patent" style="background: var(--accent-bg); color: var(--accent); border-color: var(--border-glow);">${item.count} Duplicate(s)</span>
+                <span class="delete-item-text" title="${escapeHtml(label)}">${escapeHtml(label)}</span>
+              </div>`;
+            })
+            .join("");
+        }
+
+        if (elModalDeleteConfirm) {
+          elModalDeleteConfirm.classList.remove("hidden");
+        }
+      } catch (err) {
+        alert(`Deduplication error: ${err.message}`);
+      }
+    });
+  }
+
   if (elBtnGlobalDelete) {
     elBtnGlobalDelete.addEventListener("click", () => {
       const { searchIds, patentIds, displayItems } = getSelectedItemsToDelete();
@@ -3206,6 +3462,27 @@ function setupEventListeners() {
         return;
       }
       deletePayload = { searchIds, patentIds };
+      isDeduplicateMode = false;
+
+      // Reset modal header & labels for standard deletion
+      const modalHeaderHeading = elModalDeleteConfirm?.querySelector(".modal-header h3");
+      if (modalHeaderHeading) {
+        modalHeaderHeading.innerHTML = `
+          <svg class="icon-sm" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <polyline points="3 6 5 6 21 6"></polyline>
+            <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
+          </svg>
+          Confirm Deletion`;
+      }
+
+      const alertBodyText = elModalDeleteConfirm?.querySelector(".alert-body p");
+      if (alertBodyText) {
+        alertBodyText.textContent = "Are you sure you want to delete the following selected item(s)?";
+      }
+
+      if (elBtnDeleteConfirmAction) {
+        elBtnDeleteConfirmAction.textContent = "Delete Items";
+      }
 
       // Populate modal list
       if (elDeleteSelectedList) {
@@ -3237,6 +3514,7 @@ function setupEventListeners() {
 
   if (elBtnDeleteCancel) {
     elBtnDeleteCancel.addEventListener("click", () => {
+      isDeduplicateMode = false;
       if (elModalDeleteConfirm) {
         elModalDeleteConfirm.classList.add("hidden");
       }
@@ -3246,6 +3524,7 @@ function setupEventListeners() {
   if (elModalDeleteConfirm) {
     elModalDeleteConfirm.addEventListener("click", (e) => {
       if (e.target === elModalDeleteConfirm) {
+        isDeduplicateMode = false;
         elModalDeleteConfirm.classList.add("hidden");
       }
     });
@@ -3254,6 +3533,35 @@ function setupEventListeners() {
   if (elBtnDeleteConfirmAction) {
     elBtnDeleteConfirmAction.addEventListener("click", async () => {
       try {
+        if (isDeduplicateMode) {
+          const res = await fetch("/api/history/deduplicate", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              project_id: state.activeProjectId,
+              confirm: true,
+            }),
+          });
+          if (!res.ok) {
+            const err = await res.json();
+            throw new Error(formatErrorDetail(err.detail, "Deduplication failed"));
+          }
+          const data = await res.json();
+
+          if (elModalDeleteConfirm) {
+            elModalDeleteConfirm.classList.add("hidden");
+          }
+
+          isDeduplicateMode = false;
+
+          if (state.activeProjectId) {
+            await loadProjectHistory(state.activeProjectId);
+          }
+
+          alert(data.message);
+          return;
+        }
+
         const res = await fetch("/api/history/delete", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -3282,7 +3590,7 @@ function setupEventListeners() {
           await loadProjectHistory(state.activeProjectId);
         }
       } catch (err) {
-        alert(`Failed to delete selected items: ${err.message}`);
+        alert(`Action failed: ${err.message}`);
       }
     });
   }
