@@ -1451,14 +1451,17 @@ async def _direct_deep_scrape_pipeline(
     user_id: int,
     project_id: int,
 ):
-    """Directly deep scrape list of patent publication numbers and save with full text & metadata."""
+    """Directly deep scrape list of patent publication numbers and save with full text & metadata.
+    First executes normal search/scrape to retrieve canonical patent URLs & metadata,
+    then executes deep scrape for complete claims & description retrieval.
+    """
     import re
     queue = _task_queues[task_id]
     total = len(publication_numbers)
 
     await _push(queue, {
         "stage": "scraping",
-        "message": f"Starting direct deep scrape for {total} publication number{'' if total == 1 else 's'}...",
+        "message": f"Starting direct deep scrape pipeline for {total} item{'' if total == 1 else 's'}...",
         "total": total,
         "current": 0,
     })
@@ -1477,33 +1480,81 @@ async def _direct_deep_scrape_pipeline(
             break
 
         clean_pid = pid.strip()
+        url = ""
+        p_title = ""
+        p_abstract = ""
+        patent_code = clean_pid
+
         if clean_pid.startswith("http://") or clean_pid.startswith("https://"):
             url = clean_pid
             m = re.search(r'/patent/([^/]+)', url) or re.search(r'pn=([^&]+)', url)
             clean_pid = m.group(1) if m else clean_pid
-        elif clean_pid.upper().startswith("IN") or bool(re.search(r'^\d{10,14}$', clean_pid)):
-            url = f"https://iprsearch.ipindia.gov.in/publicsearch"
-        else:
-            code = clean_pid.replace(" ", "").replace("-", "").replace("/", "")
-            url = f"https://patents.google.com/patent/{code}/en"
+            patent_code = clean_pid
 
         await _push(queue, {
             "stage": "scraping",
             "current": idx,
             "total": total,
-            "message": f"Direct deep scraping [{idx}/{total}]: {clean_pid}",
+            "message": f"🔍 [1/2] Normal scrape retrieving URL & metadata for [{idx}/{total}]: {clean_pid}",
         })
 
+        # Step 1: Perform normal scrape first to get canonical URL, title & abstract smoothly
+        scraped_results = []
+        if not url:
+            try:
+                is_india = clean_pid.upper().startswith("IN") or bool(re.search(r'^\d{10,14}$', clean_pid))
+                source_target = "India Patents" if is_india else "Google Patents"
+                
+                scraped_results = await scrape_patents(
+                    query=clean_pid,
+                    sources=[source_target],
+                    max_results=1,
+                )
+            except Exception as e:
+                logger.warning("[DirectDeepScrape] Normal scrape pre-fetch failed for %s: %s", clean_pid, e)
+
+        if scraped_results:
+            top = scraped_results[0]
+            url = top.get("url") or url
+            p_title = top.get("title") or ""
+            p_abstract = top.get("abstract") or ""
+            patent_code = top.get("patent_id") or clean_pid
+            logger.info("[DirectDeepScrape] Normal scrape resolved canonical URL: %s", url)
+
+        # Fallback URL resolution if normal scrape did not provide a URL
+        if not url:
+            if clean_pid.upper().startswith("IN") or bool(re.search(r'^\d{10,14}$', clean_pid)):
+                url = "https://iprsearch.ipindia.gov.in/publicsearch"
+            else:
+                code_clean = clean_pid.replace(" ", "").replace("-", "").replace("/", "")
+                url = f"https://patents.google.com/patent/{code_clean}/en"
+
+        # Fallback title/abstract resolution via JSON-LD if not fetched
+        if not p_title or not p_abstract:
+            try:
+                j_title, j_abstract = await asyncio.to_thread(_fetch_google_patent_details_jsonld, clean_pid)
+                p_title = p_title or j_title or f"Patent {clean_pid}"
+                p_abstract = p_abstract or j_abstract or ""
+            except Exception as e:
+                logger.warning("[DirectDeepScrape] JSON-LD metadata fallback failed for %s: %s", clean_pid, e)
+                p_title = p_title or f"Patent {clean_pid}"
+
+        await _push(queue, {
+            "stage": "scraping",
+            "current": idx,
+            "total": total,
+            "message": f"📄 [2/2] Deep scraping full body text from {url}...",
+        })
+
+        # Step 2: Deep scrape the patent page using the resolved canonical URL
         try:
-            deep_text = await asyncio.to_thread(fetch_patent_deep_scrape, url, clean_pid)
-            title, abstract = await asyncio.to_thread(_fetch_google_patent_details_jsonld, clean_pid)
-            
-            p_title = title or f"Patent {clean_pid}"
-            p_abstract = abstract or (deep_text[:400] + "..." if len(deep_text) > 400 else deep_text or "Direct deep-scraped patent.")
+            deep_text = await asyncio.to_thread(fetch_patent_deep_scrape, url, patent_code)
+            if not p_abstract and deep_text:
+                p_abstract = deep_text[:400] + "..." if len(deep_text) > 400 else deep_text
 
             p_dict = {
-                "source": "Google Patents",
-                "patent_id": clean_pid,
+                "source": "Google Patents" if "google" in url else ("India Patents" if "ipindia" in url or "iprsearch" in url else "Google Patents"),
+                "patent_id": patent_code,
                 "title": p_title,
                 "abstract": p_abstract,
                 "url": url,
@@ -1517,16 +1568,16 @@ async def _direct_deep_scrape_pipeline(
                 "current": idx,
                 "total": total,
                 "patent_id": inserted_id,
-                "message": f"✅ Deep scraped & saved {clean_pid} — {len(deep_text):,} characters.",
+                "message": f"✅ Deep scraped & saved {patent_code} — {len(deep_text):,} chars (URL: {url}).",
             })
         except Exception as exc:
             failed.append(clean_pid)
-            logger.error("[DirectDeepScrape] Failed for %s: %s", clean_pid, exc, exc_info=True)
+            logger.error("[DirectDeepScrape] Deep scrape failed for %s: %s", clean_pid, exc, exc_info=True)
             await _push(queue, {
                 "stage": "scraping",
                 "current": idx,
                 "total": total,
-                "message": f"⚠️ Direct deep scrape failed for {clean_pid}: {str(exc)[:100]}",
+                "message": f"⚠️ Deep scrape failed for {clean_pid}: {str(exc)[:100]}",
             })
 
     await _push(queue, {
@@ -1777,6 +1828,36 @@ def export_project_markdown(project_id: int, req: ExportRequest = None, user_id:
     return StreamingResponse(
         io.BytesIO(content.encode("utf-8")),
         media_type="text/markdown",
+        headers={"Content-Disposition": f"attachment; filename={filename}"},
+    )
+
+@app.post("/api/projects/{project_id}/export/json")
+def export_project_json(project_id: int, req: ExportRequest = None, user_id: int = Depends(get_current_user_id)):
+    if not verify_project_ownership(project_id, user_id):
+        raise HTTPException(status_code=403, detail="Access denied")
+    req = req or ExportRequest()
+    patents = get_patents_by_ids(req.patent_ids, user_id) if req.patent_ids else get_all_project_patents(project_id, user_id)
+    if not patents:
+        raise HTTPException(status_code=404, detail="No patents found to export")
+
+    patents = _enrich_relevancy(patents)
+    patents = _apply_relevancy_filter(patents, req.relevancy_filter)
+    if not patents:
+        raise HTTPException(status_code=404, detail="No patents match the selected relevancy filter")
+
+    export_data = {
+        "project_id": project_id,
+        "exported_at": datetime.now().isoformat(),
+        "total_patents": len(patents),
+        "patents": patents,
+    }
+
+    import json
+    json_bytes = json.dumps(export_data, indent=2, default=str).encode("utf-8")
+    filename = f"patentlens_project{project_id}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
+    return StreamingResponse(
+        io.BytesIO(json_bytes),
+        media_type="application/json",
         headers={"Content-Disposition": f"attachment; filename={filename}"},
     )
 

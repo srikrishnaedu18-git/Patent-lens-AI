@@ -1092,8 +1092,11 @@
                       type="button"
                       id="btn-global-ai-audit"
                       class="btn-secondary btn-ai-audit-global"
-                      title="Audit Selected Patents"
+                      title="Audit Selected Patents with AI"
                     >
+                      <svg class="icon-sm" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83"/>
+                      </svg>
                       AI Audit
                     </button>
                     <button
@@ -1102,50 +1105,92 @@
                       class="btn-secondary btn-deep-scrape-global"
                       title="Deep Scrape Selected Patents"
                     >
+                      <svg class="icon-sm" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+                        <polyline points="7 10 12 15 17 10"/>
+                        <line x1="12" y1="15" x2="12" y2="3"/>
+                      </svg>
                       Deep scrape
                     </button>
-                    <button
-                      type="button"
-                      id="btn-global-export-csv"
-                      class="btn-secondary btn-export-global"
-                      title="Export Selected to CSV"
-                    >
-                      <svg
-                        class="icon-sm"
-                        viewBox="0 0 24 24"
-                        fill="none"
-                        stroke="currentColor"
-                        stroke-width="2"
-                      >
-                        <path
-                          d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3"
-                        />
-                      </svg>
-                      CSV
-                    </button>
-                    <button
-                      type="button"
-                      id="btn-global-export-md"
-                      class="btn-secondary btn-export-global"
-                      title="Export Selected to Markdown (.md)"
-                    >
-                      <svg
-                        class="icon-sm"
-                        viewBox="0 0 24 24"
-                        fill="none"
-                        stroke="currentColor"
-                        stroke-width="2"
-                      >
-                        <path
-                          d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"
-                        />
-                        <polyline points="14 2 14 8 20 8" />
-                        <line x1="16" y1="13" x2="8" y2="13" />
-                        <line x1="16" y1="17" x2="8" y2="17" />
-                        <polyline points="10 9 9 9 8 9" />
-                      </svg>
-                      Markdown (.md)
-                    </button>
+                    <!-- Export Split-Button Component with Dropup -->
+                    <div class="export-split-dropdown-container" id="export-split-container">
+                      <div class="export-split-btn-group">
+                        <button
+                          type="button"
+                          id="btn-global-export-main"
+                          class="btn-secondary btn-export-main"
+                          title="Export in default format (Markdown)"
+                        >
+                          <svg id="export-main-icon" class="icon-sm" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+                            <polyline points="14 2 14 8 20 8"/>
+                            <line x1="16" y1="13" x2="8" y2="13"/>
+                            <line x1="16" y1="17" x2="8" y2="17"/>
+                          </svg>
+                          <span id="export-main-label">Markdown</span>
+                        </button>
+                        <button
+                          type="button"
+                          id="btn-global-export-toggle"
+                          class="btn-secondary btn-export-toggle"
+                          aria-label="More export options"
+                          title="More export formats (Markdown, CSV, JSON)"
+                        >
+                          <svg class="icon-xs export-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <polyline points="18 15 12 9 6 15"/>
+                          </svg>
+                        </button>
+                      </div>
+
+                      <div id="export-dropup-menu" class="export-dropup-menu">
+                        <div class="dropup-header">Export Format</div>
+
+                        <!-- Option 1: Markdown -->
+                        <div class="export-format-item" data-format="md">
+                          <div class="export-format-body" title="Set Markdown as default export format & download">
+                            <svg class="icon-sm format-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>
+                            <div class="format-info">
+                              <span class="format-title">Markdown</span>
+                              <span class="format-ext">.md</span>
+                            </div>
+                            <span class="default-badge hidden" id="badge-default-md">Default</span>
+                          </div>
+                          <button type="button" class="btn-direct-download" data-download-format="md" title="Download Markdown directly (without changing default)">
+                            <svg class="icon-xs" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3"/></svg>
+                          </button>
+                        </div>
+
+                        <!-- Option 2: CSV -->
+                        <div class="export-format-item" data-format="csv">
+                          <div class="export-format-body" title="Set CSV as default export format & download">
+                            <svg class="icon-sm format-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="8" y1="13" x2="16" y2="13"/><line x1="8" y1="17" x2="16" y2="17"/></svg>
+                            <div class="format-info">
+                              <span class="format-title">CSV Spreadsheet</span>
+                              <span class="format-ext">.csv</span>
+                            </div>
+                            <span class="default-badge hidden" id="badge-default-csv">Default</span>
+                          </div>
+                          <button type="button" class="btn-direct-download" data-download-format="csv" title="Download CSV directly (without changing default)">
+                            <svg class="icon-xs" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3"/></svg>
+                          </button>
+                        </div>
+
+                        <!-- Option 3: JSON -->
+                        <div class="export-format-item" data-format="json">
+                          <div class="export-format-body" title="Set JSON as default export format & download">
+                            <svg class="icon-sm format-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><path d="M10 12a2 2 0 0 0-2-2 2 2 0 0 0-2 2v1a2 2 0 0 0 2 2 2 2 0 0 0 2-2z"/><path d="M14 12a2 2 0 0 0 2-2 2 2 0 0 0 2 2v1a2 2 0 0 0-2 2 2 2 0 0 0-2-2z"/></svg>
+                            <div class="format-info">
+                              <span class="format-title">JSON Dataset</span>
+                              <span class="format-ext">.json</span>
+                            </div>
+                            <span class="default-badge hidden" id="badge-default-json">Default</span>
+                          </div>
+                          <button type="button" class="btn-direct-download" data-download-format="json" title="Download JSON directly (without changing default)">
+                            <svg class="icon-xs" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3"/></svg>
+                          </button>
+                        </div>
+                      </div>
+                    </div>
                     <button
                       type="button"
                       id="btn-global-delete"

@@ -2490,6 +2490,106 @@ function showAlertDialog(msg) {
   elModalAlert.classList.remove("hidden");
 }
 
+// ── Export Split Button Dropup Component ─────────────────────────────────────
+const EXPORT_FORMAT_CONFIG = {
+  md: {
+    label: "Markdown",
+    apiFormat: "markdown",
+    ext: ".md",
+    svgHtml: `<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/>`,
+  },
+  csv: {
+    label: "CSV",
+    apiFormat: "csv",
+    ext: ".csv",
+    svgHtml: `<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="8" y1="13" x2="16" y2="13"/><line x1="8" y1="17" x2="16" y2="17"/>`,
+  },
+  json: {
+    label: "JSON",
+    apiFormat: "json",
+    ext: ".json",
+    svgHtml: `<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><path d="M10 12a2 2 0 0 0-2-2 2 2 0 0 0-2 2v1a2 2 0 0 0 2 2 2 2 0 0 0 2-2z"/><path d="M14 12a2 2 0 0 0 2-2 2 2 0 0 0 2 2v1a2 2 0 0 0-2 2 2 2 0 0 0-2-2z"/>`,
+  },
+};
+
+let currentExportFormatKey = localStorage.getItem("preferred_export_format") || "md";
+
+function updateExportDefaultUI(formatKey) {
+  if (!EXPORT_FORMAT_CONFIG[formatKey]) formatKey = "md";
+  currentExportFormatKey = formatKey;
+  localStorage.setItem("preferred_export_format", formatKey);
+
+  const config = EXPORT_FORMAT_CONFIG[formatKey];
+  const elMainLabel = document.getElementById("export-main-label");
+  const elMainIcon = document.getElementById("export-main-icon");
+  const elMainBtn = document.getElementById("btn-global-export-main");
+
+  if (elMainLabel) elMainLabel.textContent = config.label;
+  if (elMainIcon) elMainIcon.innerHTML = config.svgHtml;
+  if (elMainBtn) elMainBtn.title = `Export in default format (${config.label})`;
+
+  ["md", "csv", "json"].forEach((key) => {
+    const badge = document.getElementById(`badge-default-${key}`);
+    if (badge) {
+      if (key === formatKey) {
+        badge.classList.remove("hidden");
+      } else {
+        badge.classList.add("hidden");
+      }
+    }
+  });
+}
+
+function setupExportDropup() {
+  const elMainBtn = document.getElementById("btn-global-export-main");
+  const elToggleBtn = document.getElementById("btn-global-export-toggle");
+  const elSplitContainer = document.getElementById("export-split-container");
+
+  updateExportDefaultUI(currentExportFormatKey);
+
+  // Main button click: download in default format directly
+  if (elMainBtn) {
+    elMainBtn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      const apiFormat = EXPORT_FORMAT_CONFIG[currentExportFormatKey]?.apiFormat || "markdown";
+      handleGlobalExport(apiFormat);
+    });
+  }
+
+  // Toggle button click
+  if (elToggleBtn) {
+    elToggleBtn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      elSplitContainer?.classList.toggle("open");
+    });
+  }
+
+  // Clicking format body ("press on the body"): sets new default & downloads
+  document.querySelectorAll(".export-format-body").forEach((bodyEl) => {
+    bodyEl.addEventListener("click", (e) => {
+      e.stopPropagation();
+      const formatItem = bodyEl.closest(".export-format-item");
+      const formatKey = formatItem?.dataset.format || "md";
+
+      updateExportDefaultUI(formatKey);
+
+      const apiFormat = EXPORT_FORMAT_CONFIG[formatKey]?.apiFormat || "markdown";
+      handleGlobalExport(apiFormat);
+    });
+  });
+
+  // Clicking direct download icon on right end: downloads without changing default
+  document.querySelectorAll(".btn-direct-download").forEach((btnEl) => {
+    btnEl.addEventListener("click", (e) => {
+      e.stopPropagation();
+      const formatKey = btnEl.dataset.downloadFormat || "md";
+
+      const apiFormat = EXPORT_FORMAT_CONFIG[formatKey]?.apiFormat || "markdown";
+      handleGlobalExport(apiFormat);
+    });
+  });
+}
+
 // ── Exporter Operations ──────────────────────────────────────────────────────
 async function downloadExport(format, patentIds = null) {
   if (!state.activeProjectId) {
@@ -2500,7 +2600,12 @@ async function downloadExport(format, patentIds = null) {
   const elLoadingModal = document.getElementById("modal-export-loading");
   const elLoadingLabel = document.getElementById("export-loading-label");
 
-  const formatLabel = format === "csv" ? "CSV Spreadsheet" : "Markdown Report";
+  const formatLabelMap = {
+    csv: "CSV Spreadsheet",
+    markdown: "Markdown Report",
+    json: "JSON Dataset",
+  };
+  const formatLabel = formatLabelMap[format] || "Export File";
   if (elLoadingLabel) elLoadingLabel.textContent = `Preparing ${formatLabel}…`;
   if (elLoadingModal) elLoadingModal.classList.remove("hidden");
 
@@ -2526,10 +2631,11 @@ async function downloadExport(format, patentIds = null) {
     const a = document.createElement("a");
     a.href = downloadUrl;
     const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
-    const cleanProjName = state.activeProjectName
+    const cleanProjName = (state.activeProjectName || "project")
       .replace(/[^a-z0-9]/gi, "_")
       .toLowerCase();
-    a.download = `patentlens_${cleanProjName}_${patentIds ? "selected" : "all"}_${timestamp}.${format}`;
+    const fileExt = format === "markdown" ? "md" : format;
+    a.download = `patentlens_${cleanProjName}_${patentIds ? "selected" : "all"}_${timestamp}.${fileExt}`;
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
@@ -3595,16 +3701,8 @@ function setupEventListeners() {
     });
   }
 
-  if (elBtnGlobalExportCsv) {
-    elBtnGlobalExportCsv.addEventListener("click", () =>
-      handleGlobalExport("csv"),
-    );
-  }
-  if (elBtnGlobalExportMd) {
-    elBtnGlobalExportMd.addEventListener("click", () =>
-      handleGlobalExport("markdown"),
-    );
-  }
+  setupExportDropup();
+
   if (elBtnGlobalAiAudit) {
     elBtnGlobalAiAudit.addEventListener("click", triggerSelectedAudit);
   }
