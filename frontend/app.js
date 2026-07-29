@@ -18,6 +18,45 @@ window.fetch = async (...args) => {
   return response;
 };
 
+// ── Toast Notification System ────────────────────────────────────────────────
+function showNotification(message, type = "info", duration = 5000) {
+  const container = document.getElementById("toast-container");
+  if (!container) return;
+
+  const icons = {
+    success: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>`,
+    error:   `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>`,
+    warning: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>`,
+    info:    `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>`,
+  };
+  const titles = { success: "Success", error: "Error", warning: "Warning", info: "Notice" };
+
+  const toast = document.createElement("div");
+  toast.className = `toast toast-${type}`;
+
+  toast.innerHTML = `
+    <span class="toast-icon">${icons[type] || icons.info}</span>
+    <div class="toast-body">
+      <div class="toast-title">${titles[type] || "Notice"}</div>
+      <div class="toast-message">${message}</div>
+    </div>
+    <button class="toast-close" aria-label="Dismiss notification" title="Dismiss">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+    </button>
+    <div class="toast-progress" style="animation-duration: ${duration}ms;"></div>
+  `;
+
+  container.appendChild(toast);
+
+  const dismiss = () => {
+    toast.classList.add("toast-hiding");
+    toast.addEventListener("animationend", () => toast.remove(), { once: true });
+  };
+
+  toast.querySelector(".toast-close").addEventListener("click", dismiss);
+  setTimeout(dismiss, duration);
+}
+
 // ── Application State ────────────────────────────────────────────────────────
 let state = {
   projects: [],
@@ -763,7 +802,7 @@ async function handleManualScrapeSubmit(e) {
   e.preventDefault();
 
   if (!state.activeProjectId) {
-    alert("Please select or create a project first.");
+    showNotification("Please select or create a project first.", "warning");
     return;
   }
 
@@ -776,7 +815,7 @@ async function handleManualScrapeSubmit(e) {
   if (activeSource === "all") {
     keywords = (elKeywordsInputAll ? elKeywordsInputAll.value.trim() : "") || (elKeywordsInput ? elKeywordsInput.value.trim() : "");
     if (!keywords) {
-      alert("Please enter at least one keyword for multi-platform search.");
+      showNotification("Please enter at least one keyword for multi-platform search.", "warning");
       return;
     }
 
@@ -786,7 +825,7 @@ async function handleManualScrapeSubmit(e) {
     );
 
     if (enabledSources.length === 0) {
-      alert("Please select at least one platform pill to search.");
+      showNotification("Please select at least one platform pill to search.", "warning");
       return;
     }
 
@@ -862,7 +901,7 @@ async function handleManualScrapeSubmit(e) {
   } else if (activeSource === "google") {
     keywords = elKeywordsInput.value.trim();
     if (!keywords) {
-      alert("Please enter at least one keyword.");
+      showNotification("Please enter at least one keyword.", "warning");
       return;
     }
   } else if (activeSource === "espacenet") {
@@ -879,7 +918,7 @@ async function handleManualScrapeSubmit(e) {
     }
 
     if (espacenetRows.length === 0 || espacenetRows.every((r) => !r.text)) {
-      alert("Please provide at least one Espacenet search term.");
+      showNotification("Please provide at least one Espacenet search term.", "warning");
       return;
     }
 
@@ -948,7 +987,7 @@ async function handleManualScrapeSubmit(e) {
     }
 
     if (indiaRows.length === 0 || indiaRows.every((r) => !r.text)) {
-      alert("Please provide at least one query search term.");
+      showNotification("Please provide at least one query search term.", "warning");
       return;
     }
 
@@ -1149,7 +1188,7 @@ async function handleManualScrapeSubmit(e) {
   } catch (err) {
     writeLogLine(`❌ Error: ${err.message}`, "error");
     updateStagePill("scraping", "error");
-    alert(`Error running scrape: ${err.message}`);
+    showNotification(`Error running scrape: ${err.message}`, "error");
     setManualLoading(false);
     if (elBtnTerminateScrape) elBtnTerminateScrape.classList.add("hidden");
   }
@@ -1189,13 +1228,13 @@ function setManualLoading(isLoading) {
 
 async function handleDirectDeepScrape() {
   if (!state.activeProjectId) {
-    alert("Please select or create a project first.");
+    showNotification("Please select or create a project first.", "warning");
     return;
   }
 
   const rawKeywords = elKeywordsInput ? elKeywordsInput.value.trim() : "";
   if (!rawKeywords) {
-    alert("Please enter publication numbers (e.g. US11952460B2, JP7502368B2) in the keywords input box.");
+    showNotification("Please enter publication numbers (e.g. US11952460B2, JP7502368B2) in the keywords input box.", "warning");
     return;
   }
 
@@ -1247,7 +1286,7 @@ async function handleDirectDeepScrape() {
   } catch (err) {
     writeLogLine(`❌ Error: ${err.message}`, "error");
     updateStagePill("scraping", "error");
-    alert(`Error running direct deep scrape: ${err.message}`);
+    showNotification(`Error running direct deep scrape: ${err.message}`, "error");
     setDirectDeepLoading(false);
     if (elBtnTerminateScrape) elBtnTerminateScrape.classList.add("hidden");
   }
@@ -1274,13 +1313,11 @@ function setDirectDeepLoading(isLoading) {
 async function handleGenerateQueries() {
   const requirement = elRequirementInput.value.trim();
   if (!requirement) {
-    alert("Please enter your invention requirement first.");
+    showNotification("Please enter your invention requirement first.", "warning");
     return;
   }
   if (requirement.length < 30) {
-    alert(
-      "Requirement too short. Please provide a more descriptive mechanism (minimum 30 characters).",
-    );
+    showNotification("Requirement too short. Please provide a more descriptive mechanism (minimum 30 characters).", "warning");
     return;
   }
 
@@ -1302,7 +1339,7 @@ async function handleGenerateQueries() {
     state.aiResponse = strategy;
     renderQueryReviewPanel(strategy);
   } catch (err) {
-    alert(`AI Error: ${err.message}`);
+    showNotification(`AI Error: ${err.message}`, "error");
   } finally {
     setGenerateLoading(false);
   }
@@ -1363,7 +1400,7 @@ async function handleConfirmSearch() {
     .filter(Boolean);
 
   if (queries.length === 0) {
-    alert("Please configure at least one query to search.");
+    showNotification("Please configure at least one query to search.", "warning");
     return;
   }
 
@@ -1456,6 +1493,7 @@ function initStagePillsForFlow(flowName) {
 function startSSEStream(taskId, onComplete = null) {
   state.activeTaskId = taskId;
   state.activeStreamOnComplete = onComplete;
+  state.lastSSEStage = null; // track the last received stage
   initStagePillsForFlow(state.activeFlow || "manual_scrape");
   const eventSource = new EventSource(`/api/ai/stream/${taskId}`);
   state.activeEventSource = eventSource;
@@ -1463,6 +1501,7 @@ function startSSEStream(taskId, onComplete = null) {
   eventSource.onmessage = (event) => {
     try {
       const data = JSON.parse(event.data);
+      if (data.stage) state.lastSSEStage = data.stage;
       handleSSEStageUpdate(data, taskId);
       if (data.stage === "complete" || data.stage === "error") {
         eventSource.close();
@@ -1481,10 +1520,12 @@ function startSSEStream(taskId, onComplete = null) {
   eventSource.onerror = (err) => {
     if (!state.activeEventSource) return; // Clean exit if already closed by onmessage completion
     console.error("SSE Connection error:", err);
-    writeLogLine(
-      "⚠️ EventStream disconnected. Checking task completion status...",
-      "warning",
-    );
+    const scrapeSucceeded = state.lastSSEStage === "complete";
+    if (scrapeSucceeded) {
+      writeLogLine("✅ Scrape completed successfully. Stream closed.", "success");
+    } else {
+      writeLogLine("❌ Stream disconnected unexpectedly. Scrape may have failed.", "error");
+    }
     eventSource.close();
     state.activeEventSource = null;
     setPipelineLoading(false);
@@ -1725,7 +1766,7 @@ function handleSSEStageUpdate(data, taskId) {
       elBtnGlobalDeepScrape.disabled = false;
       elBtnGlobalDeepScrape.textContent = "Deep scrape";
     }
-    alert(`Pipeline Error: ${message}`);
+    showNotification(`Pipeline Error: ${message}`, "error");
   }
 }
 
@@ -2620,7 +2661,7 @@ function setupExportDropup() {
 // ── Exporter Operations ──────────────────────────────────────────────────────
 async function downloadExport(format, patentIds = null) {
   if (!state.activeProjectId) {
-    alert("Please select a project first.");
+    showNotification("Please select a project first.", "warning");
     return;
   }
 
@@ -2668,7 +2709,7 @@ async function downloadExport(format, patentIds = null) {
     document.body.removeChild(a);
     window.URL.revokeObjectURL(downloadUrl);
   } catch (err) {
-    alert(`Export failed: ${err.message}`);
+    showNotification(`Export failed: ${err.message}`, "error");
   } finally {
     if (elLoadingModal) elLoadingModal.classList.add("hidden");
   }
@@ -2791,13 +2832,13 @@ async function triggerAudit(searchId, queryText) {
 
 async function triggerSelectedAudit() {
   if (!state.activeProjectId) {
-    alert("Please select a project first.");
+    showNotification("Please select a project first.", "warning");
     return;
   }
 
   const patentIds = getSelectedPatentIds();
   if (patentIds.length === 0) {
-    alert("Select at least one patent to audit.");
+    showNotification("Select at least one patent to audit.", "warning");
     return;
   }
 
@@ -2845,7 +2886,7 @@ async function triggerSelectedAudit() {
     startSSEStream(task_id);
   } catch (err) {
     writeLogLine(`❌ Failed to start selected audit task: ${err.message}`, "error");
-    alert(`Could not start AI audit: ${err.message}`);
+    showNotification(`Could not start AI audit: ${err.message}`, "error");
     if (elBtnGlobalAiAudit) {
       elBtnGlobalAiAudit.disabled = false;
       elBtnGlobalAiAudit.textContent = "AI Audit";
@@ -2855,7 +2896,7 @@ async function triggerSelectedAudit() {
 
 async function triggerDeepScrape(patentIdsOverride = null) {
   if (!state.activeProjectId) {
-    alert("Please select a project first.");
+    showNotification("Please select a project first.", "warning");
     return;
   }
 
@@ -2863,7 +2904,7 @@ async function triggerDeepScrape(patentIdsOverride = null) {
     ? patentIdsOverride
     : getSelectedPatentIds();
   if (patentIds.length === 0) {
-    alert("Select at least one patent to deep scrape.");
+    showNotification("Select at least one patent to deep scrape.", "warning");
     return;
   }
 
@@ -2911,7 +2952,7 @@ async function triggerDeepScrape(patentIdsOverride = null) {
     });
   } catch (err) {
     writeLogLine(`Deep scrape failed to start: ${err.message}`, "error");
-    alert(`Could not start deep scrape: ${err.message}`);
+    showNotification(`Could not start deep scrape: ${err.message}`, "error");
     if (elBtnGlobalDeepScrape) {
       elBtnGlobalDeepScrape.disabled = false;
       elBtnGlobalDeepScrape.textContent = "Deep scrape";
@@ -3008,7 +3049,7 @@ function createStrategyItemElement(s, isFailedSection = false) {
 
 async function showSavedKeywordsModal() {
   if (!state.activeProjectId) {
-    alert("Please select a project first.");
+    showNotification("Please select a project first.", "warning");
     return;
   }
   elSavedKeywordsList.innerHTML =
@@ -3146,7 +3187,7 @@ async function showSavedKeywordsModal() {
             container.querySelectorAll(".strategy-item-checkbox:checked"),
           );
           if (checkedCbs.length === 0) {
-            alert("Please select at least one keyword first.");
+            showNotification("Please select at least one keyword first.", "warning");
             return;
           }
           const queries = checkedCbs.map((cb) =>
@@ -3288,7 +3329,7 @@ async function handleTerminateScrape() {
     });
     if (!res.ok) {
       const err = await res.json();
-      alert(`Could not stop scrape: ${formatErrorDetail(err.detail, "Unknown error")}`);
+      showNotification(`Could not stop scrape: ${formatErrorDetail(err.detail, "Unknown error")}`, "error");
       elBtnTerminateScrape.disabled = false;
       elBtnTerminateScrape.innerText = "Stop";
     } else {
@@ -3299,7 +3340,7 @@ async function handleTerminateScrape() {
     }
   } catch (err) {
     console.error(err);
-    alert("Error sending stop request");
+    showNotification("Error sending stop request", "error");
     elBtnTerminateScrape.disabled = false;
     elBtnTerminateScrape.innerText = "Stop";
   }
@@ -3515,7 +3556,7 @@ function setupEventListeners() {
   if (elBtnDeduplicateHistory) {
     elBtnDeduplicateHistory.addEventListener("click", async () => {
       if (!state.activeProjectId) {
-        alert("Please select a project first.");
+        showNotification("Please select a project first.", "warning");
         return;
       }
 
@@ -3537,7 +3578,7 @@ function setupEventListeners() {
         const data = await res.json();
 
         if (data.duplicate_count === 0) {
-          alert("No duplicate patents found in this project. All scraped history entries are unique!");
+          showNotification("No duplicate patents found in this project. All scraped history entries are unique!", "success");
           return;
         }
 
@@ -3582,7 +3623,7 @@ function setupEventListeners() {
           elModalDeleteConfirm.classList.remove("hidden");
         }
       } catch (err) {
-        alert(`Deduplication error: ${err.message}`);
+        showNotification(`Deduplication error: ${err.message}`, "error");
       }
     });
   }
@@ -3591,7 +3632,7 @@ function setupEventListeners() {
     elBtnGlobalDelete.addEventListener("click", () => {
       const { searchIds, patentIds, displayItems } = getSelectedItemsToDelete();
       if (searchIds.length === 0 && patentIds.length === 0) {
-        alert("Please select at least one keyword search or patent to delete.");
+        showNotification("Please select at least one keyword search or patent to delete.", "warning");
         return;
       }
       deletePayload = { searchIds, patentIds };
@@ -3691,7 +3732,7 @@ function setupEventListeners() {
             await loadProjectHistory(state.activeProjectId);
           }
 
-          alert(data.message);
+          showNotification(data.message, "info");
           return;
         }
 
@@ -3723,7 +3764,7 @@ function setupEventListeners() {
           await loadProjectHistory(state.activeProjectId);
         }
       } catch (err) {
-        alert(`Action failed: ${err.message}`);
+        showNotification(`Action failed: ${err.message}`, "error");
       }
     });
   }
@@ -3744,7 +3785,7 @@ function setupEventListeners() {
       if (btn.classList.contains("active")) {
         const activeBtns = document.querySelectorAll(".all-platform-pill.active");
         if (activeBtns.length <= 1) {
-          alert("At least one platform must remain selected.");
+          showNotification("At least one platform must remain selected.", "warning");
           return;
         }
         btn.classList.remove("active");
@@ -3817,7 +3858,7 @@ function setupEventListeners() {
       if (rows.length > 1) {
         rows[rows.length - 1].remove();
       } else {
-        alert("At least one query row is required.");
+        showNotification("At least one query row is required.", "warning");
       }
     });
   }
@@ -3881,7 +3922,7 @@ async function handleCreateProject(e) {
     await loadProjects();
     selectProject(newProject.id, newProject.name, newProject.created_at);
   } catch (err) {
-    alert("Project already exists or failed to create.");
+    showNotification("Project already exists or failed to create.", "error");
   }
 }
 
@@ -4079,7 +4120,7 @@ function addRowToUi(container, field = "TI", text = "", logic = "AND") {
   if (!container) return;
   const rowCount = container.querySelectorAll(".india-query-row").length;
   if (rowCount >= 5) {
-    alert("Maximum of 5 query rows is allowed.");
+    showNotification("Maximum of 5 query rows is allowed.", "warning");
     return;
   }
 
@@ -4135,9 +4176,7 @@ function saveIndiaOptions(e) {
   const published = elIndiaOptPublished.checked;
   const granted = elIndiaOptGranted.checked;
   if (!published && !granted) {
-    alert(
-      "At least one publication type (Published or Granted) must be selected.",
-    );
+    showNotification("At least one publication type (Published or Granted) must be selected.", "warning");
     return;
   }
 
@@ -4196,7 +4235,7 @@ async function handleCaptchaSubmit(e) {
     );
     elModalCaptcha.classList.add("hidden");
   } catch (err) {
-    alert(`Error submitting CAPTCHA: ${err.message}`);
+    showNotification(`Error submitting CAPTCHA: ${err.message}`, "error");
   } finally {
     elBtnCaptchaSubmit.disabled = false;
     elBtnCaptchaSubmit.innerText = "Verify CAPTCHA";
@@ -4348,7 +4387,7 @@ function addEspacenetRowToUi(
     if (rows.length > 1) {
       rowDiv.remove();
     } else {
-      alert("At least one query row is required.");
+      showNotification("At least one query row is required.", "warning");
     }
   });
 
