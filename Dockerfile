@@ -1,3 +1,12 @@
+# Stage 1: Build React Frontend
+FROM node:20-slim AS frontend-builder
+WORKDIR /app/frontend-react
+COPY frontend-react/package*.json ./
+RUN npm install
+COPY frontend-react/ ./
+RUN npm run build
+
+# Stage 2: Production Python API Server
 FROM python:3.11-slim
 
 # Environment
@@ -45,13 +54,14 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Install Playwright browser
 RUN python -m playwright install chromium
 
-# Copy app
+# Copy full application
 COPY . .
 
-# Expose the default port (Render overrides this with its own PORT env var)
+# Copy built React frontend output from Stage 1 into frontend-react/dist
+COPY --from=frontend-builder /app/frontend-react/dist ./frontend-react/dist
+
+# Expose default port
 EXPOSE 8000
 
-# Production entrypoint — run uvicorn directly from project root (/app)
-# server.py is in backend/ but is imported as "backend.server" module.
-# Shell form lets $PORT be expanded at runtime (Render injects PORT=10000).
+# Production entrypoint
 CMD ["sh", "-c", "uvicorn backend.server:app --host ${HOST} --port ${PORT} --workers 1"]

@@ -1893,7 +1893,32 @@ async def favicon():
 
 
 # ── Static UI ─────────────────────────────────────────────────────────────────
-static_dir = Path(__file__).resolve().parent.parent / "frontend"
+# Switch frontends via FRONTEND in your .env (no code change needed):
+#   FRONTEND=legacy  →  serves /frontend        (plain HTML/CSS/JS)  ← default
+#   FRONTEND=react   →  serves /frontend-react/dist  (built React app)
+import os as _os
+_frontend_mode = _os.environ.get("FRONTEND", "legacy").strip().lower()
+_root = Path(__file__).resolve().parent.parent
+
+if _frontend_mode == "react":
+    static_dir = _root / "frontend-react" / "dist"
+    if not (static_dir / "index.html").exists():
+        logger.warning(
+            "[Server] FRONTEND=react but no dist build found at %s. "
+            "Run `cd frontend-react && npm run build` first, or set FRONTEND=legacy.",
+            static_dir,
+        )
+    logger.info("[Server] ✅ Serving REACT frontend from: %s", static_dir)
+else:
+    if _frontend_mode != "legacy":
+        logger.warning(
+            "[Server] Unknown FRONTEND value '%s' — defaulting to legacy. "
+            "Valid options: legacy, react",
+            _frontend_mode,
+        )
+    static_dir = _root / "frontend"
+    logger.info("[Server] ✅ Serving LEGACY frontend from: %s", static_dir)
+
 static_dir.mkdir(exist_ok=True)
 app.mount("/", StaticFiles(directory=static_dir, html=True), name="static")
 
